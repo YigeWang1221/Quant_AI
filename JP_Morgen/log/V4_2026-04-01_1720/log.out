@@ -1,0 +1,74 @@
+============================================================
+  Run:  V4_2026-04-01_1720
+  Dir:  /Users/yigewang/Desktop/Quant_AI/JP_Morgen/log/V4_2026-04-01_1720/
+  Out:  log.out
+  Err:  log.err
+  Img:  img/
+============================================================
+
+Device: cpu
+Stock universe: 228 tickers across 19 sectors
+  mega_tech                : 15 stocks
+  semicon                  : 15 stocks
+  cloud_saas               : 20 stocks
+  consumer_internet        : 12 stocks
+  energy_oil               : 15 stocks
+  energy_clean             : 10 stocks
+  financials               : 20 stocks
+  insurance                : 6 stocks
+  pharma_biotech           : 20 stocks
+  health_devices           : 12 stocks
+  emerging_biotech         : 10 stocks
+  industrials              : 15 stocks
+  consumer_staples         : 12 stocks
+  consumer_disc            : 12 stocks
+  telecom                  : 6 stocks
+  reits                    : 8 stocks
+  materials                : 6 stocks
+  transport                : 6 stocks
+  emerging_ai              : 8 stocks
+✅ 日期校验通过: 本地 [2016-01-01 ~ 2025-12-31] 覆盖请求 [2016-01-01 ~ 2025-12-31]
+✅ 从 ./v3_data/ 加载 (63 stocks, filtered to [2016-01-01 ~ 2025-12-31])
+因子数: 35
+['ret_5d', 'ret_10d', 'ret_20d', 'ret_60d', 'mom_accel', 'vol_20d', 'vol_ratio', 'vol_accel', 'intraday_vol', 'vol_spread', 'vol_ma_ratio', 'volume_trend', 'obv_norm', 'vwap_dev', 'bb_pos', 'ma_cross_s', 'ma_cross_l', 'rsi', 'price_pos', 'price_range', 'rel_SP500', 'corr_SP500', 'rel_Nasdaq100', 'corr_Nasdaq100', 'rel_EnergySector', 'corr_EnergySector', 'ret_252d', 'ma200_dev', 'sharpe_20d', 'gap', 'f_pe', 'f_pb', 'f_market_cap', 'f_dividend_yield', 'f_roe']
+⚠️  Removing 4 stocks with < 5 years:
+    ABNB: starts 2021-12-10
+    SNOW: starts 2021-09-16
+    PLTR: starts 2021-09-30
+    CEG: starts 2023-01-20
+
+✅ Keeping 59 stocks | 35 factors
+Require >= 47/59 stocks per day (80%)
+Valid trading days: 2256
+Date range: 2017-01-03 ~ 2025-12-22
+Stocks with valid normalized data: 58
+
+Daily dataset: 2136 days
+Stocks/day: min=49, max=58, avg=55
+Date range: 2017-06-26 ~ 2025-12-22
+
+✅ full_data ready | 2136 days | 35 factors
+   Next: run Cell 4 (model) → Cell 5 (loss) → Cell 6 (train)
+V4 params: 812,738
+Loss: 70% ListNet + 30% IC
+Data spans 8.5 years
+Auto config: min_train=3yr, val=6mo, test=6mo
+
+共 10 个 fold:
+
+  Fold 1: Train [2017-06 ~ 2020-06] | Val [2020-06 ~ 2020-12] | Test [2020-12 ~ 2021-06] (756/127/125 days)
+  Fold 2: Train [2017-06 ~ 2020-12] | Val [2020-12 ~ 2021-06] | Test [2021-06 ~ 2021-12] (883/125/126 days)
+  Fold 3: Train [2017-06 ~ 2021-06] | Val [2021-06 ~ 2021-12] | Test [2021-12 ~ 2022-06] (1008/126/125 days)
+  Fold 4: Train [2017-06 ~ 2021-12] | Val [2021-12 ~ 2022-06] | Test [2022-06 ~ 2022-12] (1134/125/127 days)
+  Fold 5: Train [2017-06 ~ 2022-06] | Val [2022-06 ~ 2022-12] | Test [2022-12 ~ 2023-06] (1259/127/123 days)
+  Fold 6: Train [2017-06 ~ 2022-12] | Val [2022-12 ~ 2023-06] | Test [2023-06 ~ 2023-12] (1386/123/127 days)
+  Fold 7: Train [2017-06 ~ 2023-06] | Val [2023-06 ~ 2023-12] | Test [2023-12 ~ 2024-06] (1509/127/125 days)
+  Fold 8: Train [2017-06 ~ 2023-12] | Val [2023-12 ~ 2024-06] | Test [2024-06 ~ 2024-12] (1636/125/127 days)
+  Fold 9: Train [2017-06 ~ 2024-06] | Val [2024-06 ~ 2024-12] | Test [2024-12 ~ 2025-06] (1761/127/123 days)
+  Fold 10: Train [2017-06 ~ 2024-12] | Val [2024-12 ~ 2025-06] | Test [2025-06 ~ 2025-12] (1888/123/124 days)
+============================================================
+Fold 1/10: test [2020-12-26 ~ 2021-06-26]
+============================================================
+  Train: 756 days | Val: 127 days | Test: 125 days
+  Precomputed 756 days
+    Ep  10 | Loss:2.8720 | Train IC:0.6274 | Val IC:0.0701 | Best:0.0726 | P:3/8
