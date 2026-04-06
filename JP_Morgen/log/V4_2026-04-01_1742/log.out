@@ -166,3 +166,6 @@ V4 Rolling Window Summary
   IC gap: 0.0278
 
   Total predictions: 59,018
+e976ee50-99ed-4aba-9b6b-9dcd5634d07d:IPyWidgets:8.1.5
+EXECUTABLE/opt/anaconda3/bin/pythonEXECUTABLE
+['/jupyter-js-widgets/extension.js', '/jupyterlab-plotly/extension.js']

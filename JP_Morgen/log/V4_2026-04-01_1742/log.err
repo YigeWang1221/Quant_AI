@@ -1,0 +1,18 @@
+--- Logging error ---
+Traceback (most recent call last):
+  File "/opt/anaconda3/lib/python3.13/logging/__init__.py", line 1155, in emit
+    self.flush()
+    ~~~~~~~~~~^^
+  File "/opt/anaconda3/lib/python3.13/logging/__init__.py", line 1137, in flush
+    self.stream.flush()
+    ~~~~~~~~~~~~~~~~~^^
+OSError: [Errno 5] Input/output error
+Call stack:
+  File "/opt/anaconda3/lib/python3.13/threading.py", line 1014, in _bootstrap
+    self._bootstrap_inner()
+  File "/opt/anaconda3/lib/python3.13/threading.py", line 1043, in _bootstrap_inner
+    self.run()
+  File "/opt/anaconda3/lib/python3.13/site-packages/ipykernel/parentpoller.py", line 38, in run
+    get_logger().warning("Parent appears to have exited, shutting down.")
+Message: 'Parent appears to have exited, shutting down.'
+Arguments: ()

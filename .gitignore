@@ -1,4 +1,9 @@
 *.csv
 .DS_Store
 *.pkl
+log
+log.err
+log.out
+log/*
+
 
