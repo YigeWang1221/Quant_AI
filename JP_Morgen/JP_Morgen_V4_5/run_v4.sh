@@ -1,21 +1,27 @@
 #!/bin/bash
-#SBATCH --job-name=JP_QuantV4
-#SBATCH --output=v4_%j.out
-#SBATCH --error=v4_%j.err
-#SBATCH --partition=gpu           # 替换为你们集群的 GPU 队列名
+# shellcheck disable=all
+
+#SBATCH --job-name=JP_QuantV4_5
+#SBATCH --partition=sharing
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8         # CPU 核心数
-#SBATCH --gres=gpu:1              # 申请 1 张 GPU
-#SBATCH --mem=32G                 # 内存大小
-#SBATCH --time=12:00:00           # 预计运行时间
+#SBATCH --cpus-per-task=4
+#SBATCH --time=12:00:00
+#SBATCH --mem=24GB
+#SBATCH --gres=gpu:a200:1
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
 
-# 加载环境 (替换为你集群的 conda/环境配置)
-# module load anaconda3
-# module load cuda/11.8
-# source activate quant_env
+module load anaconda3/2024.06
+source activate EricPy118
 
-# 运行主程序，你可以轻松在这里修改参数而不用动代码
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
+
+export NCCL_P2P_DISABLE=1
+export NCCL_DEBUG=INFO
+export PYTHONUNBUFFERED=1
+
 python main.py \
     --d_model 128 \
     --num_layers 3 \
