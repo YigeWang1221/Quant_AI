@@ -5,5 +5,7 @@ log
 log.err
 log.out
 log/*
+*.pkl
+meta.json
 
 
