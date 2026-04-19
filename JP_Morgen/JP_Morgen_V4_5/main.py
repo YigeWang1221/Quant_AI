@@ -3,6 +3,8 @@ import argparse
 import pandas as pd
 
 from config import (
+    DEFAULT_AMP_DTYPE,
+    DEFAULT_AMP_MODE,
     DEFAULT_BATCH_DAYS,
     DEFAULT_D_MODEL,
     DEFAULT_DROPOUT,
@@ -37,6 +39,20 @@ def parse_args():
     parser.add_argument("--top_n", type=int, default=DEFAULT_TOP_N, help="Top N stocks")
     parser.add_argument("--rebal_freq", type=int, default=DEFAULT_REBAL_FREQ, help="Rebalance frequency")
     parser.add_argument("--stock_plot", type=str, default="COP", help="Ticker to visualize")
+    parser.add_argument(
+        "--amp_mode",
+        type=str,
+        default=DEFAULT_AMP_MODE,
+        choices=["auto", "on", "off"],
+        help="Use CUDA mixed precision in the forward pass",
+    )
+    parser.add_argument(
+        "--amp_dtype",
+        type=str,
+        default=DEFAULT_AMP_DTYPE,
+        choices=["float16", "bfloat16"],
+        help="Mixed precision dtype for CUDA forward pass",
+    )
     return parser.parse_args()
 
 
@@ -50,6 +66,10 @@ def main():
 
     device = get_device()
     print(f"Device: {device}")
+    args.amp_enabled = device.type == "cuda" and args.amp_mode != "off"
+    if args.amp_mode == "on" and device.type != "cuda":
+        print("AMP requested, but CUDA is unavailable. Falling back to full precision.")
+    print(f"Forward AMP: {'on' if args.amp_enabled else 'off'} ({args.amp_dtype}) | Loss precision: fp32")
 
     full_data = process_and_normalize_data()
     valid_dates_dt = [pd.Timestamp(d).to_pydatetime() for d in full_data['valid_dates']]

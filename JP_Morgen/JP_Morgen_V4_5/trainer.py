@@ -1,4 +1,5 @@
 import copy
+from contextlib import nullcontext
 
 import numpy as np
 import pandas as pd
@@ -118,6 +119,10 @@ def train_one_fold_v4(fold, full_data, device, args):
         ic_weight=1.0 - args.listnet_weight,
         temperature=args.temperature,
     )
+    amp_enabled = getattr(args, "amp_enabled", False) and device.type == "cuda"
+    amp_dtype = torch.float16 if getattr(args, "amp_dtype", "float16") == "float16" else torch.bfloat16
+    scaler_enabled = amp_enabled and amp_dtype == torch.float16
+    scaler = torch.amp.GradScaler("cuda", enabled=scaler_enabled)
 
     best_val_ic, best_state, no_improve = -np.inf, None, 0
 
@@ -136,8 +141,11 @@ def train_one_fold_v4(fold, full_data, device, args):
         for x_batch, y_batch, mask_batch in batches:
             optimizer.zero_grad()
             batch_size = x_batch.shape[0]
-            preds = [model(x_batch[i], stock_mask=mask_batch[i]) for i in range(batch_size)]
-            pred_batch = torch.stack(preds)
+            amp_context = torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp_enabled) if amp_enabled else nullcontext()
+            with amp_context:
+                preds = [model(x_batch[i], stock_mask=mask_batch[i]) for i in range(batch_size)]
+                pred_batch = torch.stack(preds)
+            pred_batch = pred_batch.float()
 
             total_loss = torch.tensor(0.0, device=device)
             total_ic = 0.0
@@ -147,9 +155,16 @@ def train_one_fold_v4(fold, full_data, device, args):
                 total_ic += ic_i
             total_loss = total_loss / batch_size
 
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
+            if scaler_enabled:
+                scaler.scale(total_loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
 
             epoch_loss += total_loss.item()
             epoch_ic += total_ic / batch_size
@@ -163,7 +178,10 @@ def train_one_fold_v4(fold, full_data, device, args):
             for dt in val_dates:
                 sample = daily[dt]
                 x_val = torch.FloatTensor(sample["X"]).to(device)
-                pred_val = model(x_val).cpu().numpy()
+                amp_context = torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp_enabled) if amp_enabled else nullcontext()
+                with amp_context:
+                    pred_val = model(x_val)
+                pred_val = pred_val.float().cpu().numpy()
                 ic, _ = stats.spearmanr(pred_val, sample["y"])
                 if not np.isnan(ic):
                     val_ics.append(ic)
@@ -197,7 +215,10 @@ def train_one_fold_v4(fold, full_data, device, args):
         for dt in test_dates:
             sample = daily[dt]
             x_test = torch.FloatTensor(sample["X"]).to(device)
-            pred_test = model(x_test).cpu().numpy()
+            amp_context = torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp_enabled) if amp_enabled else nullcontext()
+            with amp_context:
+                pred_test = model(x_test)
+            pred_test = pred_test.float().cpu().numpy()
             for i, ticker in enumerate(sample["tickers"]):
                 results.append({"ticker": ticker, "date": dt, "predicted": pred_test[i], "actual": sample["y"][i]})
 
