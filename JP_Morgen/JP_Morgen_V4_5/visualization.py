@@ -43,6 +43,8 @@ def plot_fold_ic(metrics_df, res_final, img_dir):
 
 
 def plot_backtest(bt_final, fold_metrics, res_plot, img_dir):
+    realized_col = "raw_actual" if "raw_actual" in res_plot.columns else "actual"
+    realized_label = "Raw Forward Return" if realized_col == "raw_actual" else "Actual"
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle("V4 Quant Strategy (Two-Way Attention + Rolling Window)", fontsize=14, fontweight="bold")
 
@@ -65,18 +67,18 @@ def plot_backtest(bt_final, fold_metrics, res_plot, img_dir):
 
     ax = axes[1, 0]
     sample = res_plot.sample(min(3000, len(res_plot)))
-    ax.scatter(sample["predicted"], sample["actual"], alpha=0.1, s=5)
+    ax.scatter(sample["predicted"], sample[realized_col], alpha=0.1, s=5)
     ax.axhline(y=0, color="gray", ls="--")
     ax.axvline(x=0, color="gray", ls="--")
     ax.set_xlabel("Predicted")
-    ax.set_ylabel("Actual")
-    ax.set_title("Pred vs Actual")
+    ax.set_ylabel(realized_label)
+    ax.set_title(f"Pred vs {realized_label}")
     ax.grid(True, alpha=0.3)
 
     ax = axes[1, 1]
     res_quantile = res_plot.copy()
     res_quantile["q"] = pd.qcut(res_quantile["predicted"], q=5, labels=["Q1\n(Short)", "Q2", "Q3", "Q4", "Q5\n(Long)"])
-    quantile_returns = res_quantile.groupby("q", observed=False)["actual"].mean()
+    quantile_returns = res_quantile.groupby("q", observed=False)[realized_col].mean()
     bars = ax.bar(
         quantile_returns.index,
         quantile_returns.values,
@@ -87,7 +89,7 @@ def plot_backtest(bt_final, fold_metrics, res_plot, img_dir):
     ax.axhline(y=0, color="k", ls="--", lw=0.5)
     for bar, value in zip(bars, quantile_returns.values):
         ax.text(bar.get_x() + bar.get_width() / 2, value + 0.0002, f"{value:.4f}", ha="center", fontsize=9)
-    ax.set_title("Return by quantile")
+    ax.set_title(f"{realized_label} by quantile")
     ax.set_ylabel("Mean return")
 
     plt.tight_layout()
