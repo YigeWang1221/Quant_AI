@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import json
 from datetime import datetime
 
 cache_root = os.path.join(tempfile.gettempdir(), "jp_quant_cache")
@@ -45,9 +46,38 @@ class TeeWriter:
 _img_counter = [0]
 
 
-def create_run_dirs(run_label=None):
+def _slugify(text):
+    safe_chars = []
+    for char in str(text):
+        if char.isalnum():
+            safe_chars.append(char.lower())
+        elif char in (" ", "-", "_", ".", "="):
+            safe_chars.append("-")
+    slug = "".join(safe_chars)
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-")
+
+
+def _write_run_manifest(run_paths, manifest=None, header_lines=None):
+    if manifest is not None:
+        with open(run_paths["manifest_json"], "w", encoding="utf-8") as file:
+            json.dump(manifest, file, indent=2, ensure_ascii=False)
+    if header_lines is not None:
+        with open(run_paths["manifest_txt"], "w", encoding="utf-8") as file:
+            file.write("\n".join(header_lines).rstrip() + "\n")
+
+
+def create_run_dirs(run_label=None, experiment_name=None):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
-    run_name = f"{MODEL_VERSION}_{run_label}_{timestamp}" if run_label else f"{MODEL_VERSION}_{timestamp}"
+    experiment_slug = _slugify(experiment_name) if experiment_name else ""
+    run_label_slug = _slugify(run_label) if run_label else ""
+    if experiment_slug:
+        run_name = "__".join([MODEL_VERSION, experiment_slug, timestamp])
+    elif run_label_slug:
+        run_name = "__".join([MODEL_VERSION, run_label_slug, timestamp])
+    else:
+        run_name = "__".join([MODEL_VERSION, timestamp])
     run_dir = os.path.join(LOG_ROOT, run_name)
     img_dir = os.path.join(run_dir, "img")
     os.makedirs(img_dir, exist_ok=True)
@@ -55,19 +85,30 @@ def create_run_dirs(run_label=None):
         "run_name": run_name,
         "run_dir": run_dir,
         "img_dir": img_dir,
-        "log_file": os.path.join(run_dir, "log.out"),
-        "err_file": os.path.join(run_dir, "log.err"),
+        "log_file": os.path.join(run_dir, f"{run_name}.out"),
+        "err_file": os.path.join(run_dir, f"{run_name}.err"),
+        "manifest_json": os.path.join(run_dir, "run_manifest.json"),
+        "manifest_txt": os.path.join(run_dir, "run_manifest.txt"),
+        "run_label": run_label,
+        "experiment_name": experiment_name,
     }
 
 
-def setup_logging(run_paths):
+def setup_logging(run_paths, header_lines=None, manifest=None):
     sys.stdout = TeeWriter(run_paths["log_file"], sys.__stdout__)
     sys.stderr = TeeWriter(run_paths["err_file"], sys.__stderr__)
+    _write_run_manifest(run_paths, manifest=manifest, header_lines=header_lines)
     print("=" * 60)
     print(f"  Run:  {run_paths['run_name']}")
     print(f"  Dir:  {run_paths['run_dir']}/")
-    print("  Out:  log.out | Err: log.err | Img: img/")
+    print(f"  Out:  {os.path.basename(run_paths['log_file'])}")
+    print(f"  Err:  {os.path.basename(run_paths['err_file'])}")
+    print(f"  Img:  {os.path.basename(run_paths['img_dir'])}/")
+    print(f"  Meta: {os.path.basename(run_paths['manifest_json'])} | {os.path.basename(run_paths['manifest_txt'])}")
     print("=" * 60)
+    if header_lines:
+        for line in header_lines:
+            print(line)
     print()
 
 
