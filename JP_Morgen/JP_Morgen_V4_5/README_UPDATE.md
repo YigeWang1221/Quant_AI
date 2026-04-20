@@ -410,6 +410,76 @@ Status:
 
 - Active next step.
 
+### 2026-04-20 | Node 11 | First controlled capacity expansion executed
+
+Step:
+
+- Turn the model-scaling recommendation into reusable local launchers and run the first medium-size Step 2 expansion.
+
+Problem:
+
+- Capacity experiments should be repeatable and easy to compare.
+- Manual CLI editing makes it too easy to lose track of which exact model size produced which run.
+
+Solution:
+
+- Add local launchers:
+  - `strategies/step2_factor_residual_etf/run_local_fast.ps1`
+  - `strategies/step2_factor_residual_etf/run_local_scale_2_412M.ps1`
+  - `strategies/step2_factor_residual_etf/run_local_scale_4_277M.ps1`
+- Use the first expansion config:
+  - `d_model = 192`
+  - `num_layers = 4`
+  - `nhead = 6`
+  - `batch_days = 20`
+  - `amp_mode = on`
+
+Model-size note:
+
+- Current fast reference:
+  - `812,738` params
+  - `0.813M`
+- First expansion:
+  - `2,412,194` params
+  - `2.412M`
+- Second prepared expansion:
+  - `4,277,122` params
+  - `4.277M`
+
+Run result:
+
+- Run: `V4_5__step2-factor-residual-etf__2026-04-20_0758`
+- Result: completed successfully, no CUDA OOM
+- `Avg Val IC = 0.0309`
+- `Avg Test IC = 0.0070`
+- `IC gap = 0.0239`
+- Gross total return = `30.29%`
+- Net total return = `-1.19%`
+- Signal direction = `original`
+
+Comparison versus the corrected fast Step 2 reference:
+
+- `Avg Test IC`:
+  - `0.0055` -> `0.0070`
+- Net total return:
+  - `-8.75%` -> `-1.19%`
+- `IC gap`:
+  - `0.0174` -> `0.0239`
+
+Interpretation:
+
+- The first controlled expansion improved corrected out-of-sample IC.
+- It also improved corrected net return materially.
+- The larger validation-to-test gap means overfit risk rose, but not enough to reject the expansion.
+
+Expected next effect:
+
+- Use `2.412M` as the new comparison point for deciding whether to run `4.277M`.
+
+Status:
+
+- Completed.
+
 ## Current Operating Defaults
 
 Active Step 2 defaults:
@@ -426,6 +496,18 @@ Active Step 2 defaults:
 - `amp_dtype = float16`
 - `beta_window = 120`
 - `beta_min_obs = 60`
+
+Prepared local scale presets:
+
+- Fast reference:
+  - `run_local_fast.ps1`
+  - `0.813M`
+- First expansion:
+  - `run_local_scale_2_412M.ps1`
+  - `2.412M`
+- Second expansion:
+  - `run_local_scale_4_277M.ps1`
+  - `4.277M`
 
 ## Current Working Conclusions
 
@@ -448,3 +530,7 @@ Conclusion 4:
 Conclusion 5:
 
 - Model scaling should still be treated as a controlled experiment, not as a guaranteed solution to the net-return problem.
+
+Conclusion 6:
+
+- The first controlled scale-up to `2.412M` is promising enough that the next logical question is whether `4.277M` keeps improving corrected test IC without widening the generalization gap too much.
