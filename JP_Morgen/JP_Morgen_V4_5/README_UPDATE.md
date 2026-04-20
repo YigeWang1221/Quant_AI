@@ -480,22 +480,215 @@ Status:
 
 - Completed.
 
+### 2026-04-20 | Node 12 | Remote 4.277M result reviewed
+
+Step:
+
+- Compare the remote `4.277M` Step 2 run against the corrected smaller-model references.
+
+Problem:
+
+- The `2.412M` run improved corrected test IC, but its larger `IC gap` left open the question of whether more capacity would help or simply overfit.
+
+Solution:
+
+- Review the completed remote run:
+  - `D:/quant/quant1/remote_result/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1003/`
+- Use the full completed log from `1003` as the valid remote reference.
+- Ignore `0911` as an incomplete copied result because its output stops before the summary.
+
+Model size:
+
+- `256 / 4 / 8`
+- `4,277,122` params
+- `4.277M`
+
+Observed result:
+
+- `Avg Val IC = 0.0262`
+- `Avg Test IC = 0.0098`
+- `IC gap = 0.0164`
+- Gross total return = `44.33%`
+- Net total return = `7.64%`
+- Signal direction = `reversed`
+- Positive test folds = `6 / 8`
+
+Comparison versus earlier Step 2 sizes:
+
+- `0.813M`
+  - `Avg Test IC = 0.0055`
+  - `Net Total = -8.75%`
+  - `IC gap = 0.0174`
+- `2.412M`
+  - `Avg Test IC = 0.0070`
+  - `Net Total = -1.19%`
+  - `IC gap = 0.0239`
+- `4.277M`
+  - `Avg Test IC = 0.0098`
+  - `Net Total = 7.64%`
+  - `IC gap = 0.0164`
+
+Interpretation:
+
+- `4.277M` is the best Step 2 run so far.
+- It is the first tested Step 2 size with positive corrected net return.
+- It improved corrected test IC further while also pulling the generalization gap back down relative to `2.412M`.
+- This makes the result materially more interesting than a simple "bigger model overfits harder" story.
+
+Remaining caution:
+
+- Mean daily IC is still negative in that run.
+- Year-by-year returns still show regime sensitivity.
+- So the result is promising, but it should still be validated before treating it as the new final default.
+
+Status:
+
+- Completed.
+
+### 2026-04-20 | Node 13 | Next-step decision after 4.277M
+
+Step:
+
+- Decide whether to keep scaling model size or pivot to validation and monetization work.
+
+Decision:
+
+- Do not push to a larger model immediately.
+- First validate `4.277M` and make the comparison cleaner.
+
+Recommended next actions:
+
+1. Re-run `4.277M` once more with the same config to test repeatability.
+2. Run a full `0.813M` training under the new fast trainer so the smallest model is compared apples-to-apples with the new batched path.
+3. If `4.277M` remains the best after the repeat, start portfolio-construction tests on top of it rather than opening another capacity tier first.
+
+Reason:
+
+- The new result is strong enough to justify serious follow-up.
+- It is not yet strong enough to justify blindly scaling further without stability checks.
+
+Status:
+
+- Active next step.
+
+### 2026-04-20 | Node 14 | Portfolio-construction upgrade implemented
+
+Step:
+
+- Turn the earlier portfolio-construction ideas into actual Step 2 code and cluster defaults.
+
+Problem:
+
+- The model side had improved, but the trading layer still needed direct control over:
+  - basket width
+  - score smoothing
+  - incumbency / no-trade behavior
+  - rebalance spacing
+
+Solution:
+
+- Extend `backtest.py` so Step 2 can trade on a prepared signal instead of raw predictions only.
+- Add:
+  - score smoothing by ticker
+  - normalized trade signals
+  - no-trade-band selection logic
+- Extend `strategies/step2_factor_residual_etf/main.py` with:
+  - `--score_smooth_window`
+  - `--score_smooth_method`
+  - `--no_trade_band`
+- Save trade-signal columns into `predictions.csv`
+- Update `strategies/step2_factor_residual_etf/run.sh` so the cluster default is now:
+  - `4.277M`
+  - `top_n = 5`
+  - `rebal_freq = 5`
+  - `score_smooth_method = ewm`
+  - `score_smooth_window = 3`
+  - `no_trade_band = 0.30`
+
+Proxy calibration result:
+
+- A quick local sweep on the `2.412M` predictions showed a strong result for:
+  - `top_n = 5`
+  - `rebal_freq = 5`
+  - `ewm(3)` smoothing
+  - `no_trade_band = 0.30`
+
+Observed proxy effect on `2.412M` predictions:
+
+- Old combo:
+  - net total = `-0.90%`
+  - avg turnover = `0.7030`
+- New combo:
+  - net total = `30.92%`
+  - avg turnover = `0.5558`
+
+Interpretation:
+
+- Basket widening plus smoothing plus an incumbency band materially changed the monetization layer.
+- A lower trading frequency remained available as a control, but in this proxy check `rebal_freq = 10` was not the strongest tested setting, so it was not made the default.
+
+Status:
+
+- Completed.
+
+### 2026-04-20 | Node 15 | Cluster CPU-launch issue fixed
+
+Step:
+
+- Diagnose why a supposedly GPU-backed Step 2 cluster run spent a long time without finishing even one epoch.
+
+Observed symptom:
+
+- The run log showed:
+  - `Device: cpu`
+  - `AMP active: False`
+  - `batch-loaded to cpu`
+- The stderr log stayed empty.
+
+Interpretation:
+
+- The code was not stuck on a V100 or H200 GPU.
+- It was running on the login node CPU instead.
+- This happens when `bash run.sh` is executed directly on the login node, because `#SBATCH` directives are only used by `sbatch`.
+
+Solution:
+
+- Update `strategies/step2_factor_residual_etf/run.sh` so that:
+  - if there is no active Slurm allocation, it auto-submits itself with `sbatch`
+  - once inside the job, it prints host and CUDA diagnostics
+  - it performs a fast `torch.cuda.is_available()` check before full data loading
+  - it exits immediately with a clear error if no GPU is actually visible
+
+Expected effect:
+
+- No more silent long CPU runs on the login node
+- Faster diagnosis when a GPU allocation fails or lands on the wrong environment
+
+Status:
+
+- Completed.
+
 ## Current Operating Defaults
 
 Active Step 2 defaults:
 
-- `d_model = 128`
-- `num_layers = 3`
-- `nhead = 4`
+- `d_model = 256`
+- `num_layers = 4`
+- `nhead = 8`
 - `dropout = 0.15`
 - `lr = 3e-4`
-- `batch_days = 20`
+- `batch_days = 16`
 - `num_epochs = 100`
 - `patience = 15`
 - `amp_mode = on`
 - `amp_dtype = float16`
 - `beta_window = 120`
 - `beta_min_obs = 60`
+- `top_n = 5`
+- `rebal_freq = 5`
+- `score_smooth_window = 3`
+- `score_smooth_method = ewm`
+- `no_trade_band = 0.30`
 
 Prepared local scale presets:
 
@@ -534,3 +727,15 @@ Conclusion 5:
 Conclusion 6:
 
 - The first controlled scale-up to `2.412M` is promising enough that the next logical question is whether `4.277M` keeps improving corrected test IC without widening the generalization gap too much.
+
+Conclusion 7:
+
+- `4.277M` answered that question positively enough to become the provisional best model, so the next priority is robustness confirmation, not immediate further scaling.
+
+Conclusion 8:
+
+- The next serious Step 2 cluster run should use the `4.277M` model together with the new portfolio-construction layer, because signal monetization is now the most leveraged remaining optimization axis.
+
+Conclusion 9:
+
+- A cluster run that reports `Device: cpu` is an execution-path issue, not evidence that the trainer itself is hanging on GPU.
