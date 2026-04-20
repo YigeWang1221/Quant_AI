@@ -7,5 +7,10 @@ log.out
 log/*
 *.pkl
 meta.json
+*.json
+*.*.pyc
+*.pyc
+__pycache__/
+*.pyc
 
 

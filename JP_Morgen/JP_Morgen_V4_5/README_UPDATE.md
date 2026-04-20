@@ -17,6 +17,8 @@ python main.py
 python main.py --amp_mode on --amp_dtype float16
 python main.py --amp_mode on --amp_dtype bfloat16
 python main.py --amp_mode off
+python strategies/step1_sector_neutral/main.py
+python strategies/step1_sector_neutral/main.py --batch_days 24 --num_epochs 100 --patience 15 --amp_mode off
 ```
 
 Usage notes:
@@ -25,7 +27,36 @@ Usage notes:
 - `--amp_mode on --amp_dtype float16` enables CUDA mixed precision in the forward pass with `float16`.
 - `--amp_mode on --amp_dtype bfloat16` enables CUDA mixed precision in the forward pass with `bfloat16`.
 - `--amp_mode off` forces full precision training.
+- `python strategies/step1_sector_neutral/main.py` runs the Step 1 sector-neutral experiment from its dedicated strategy folder.
 - The intended design is: forward pass may use mixed precision, while loss computation remains in `fp32` for better numerical stability.
+
+## Current Implementation Status
+
+As of 2026-04-19, `Strategy_SectorNeutral` has been implemented as a dedicated strategy package:
+
+- `strategies/step1_sector_neutral/main.py`
+- `strategies/step1_sector_neutral/dataset.py`
+- `strategies/step1_sector_neutral/trainer.py`
+- `strategies/step1_sector_neutral/run.sh`
+
+Current Step 1 defaults are aligned to the locally stable `JP_Morgen_V4_MPS.ipynb` profile:
+
+- `batch_days = 24`
+- `num_epochs = 100`
+- `patience = 15`
+- `amp_mode = off`
+- Trainer memory path: keep precomputed daily tensors on CPU and move each batch to GPU on demand
+
+## Logging And Tracking
+
+The baseline entrypoint and the active Step 1 strategy now support clearer experiment artifacts:
+
+- Run directory names now follow the short pattern `V4_5__strategy-name__timestamp`
+- Stdout and stderr file names now reuse the run name instead of generic `log.out`
+- Each run writes `run_manifest.json` and `run_manifest.txt`
+- The top of the stdout log now includes the strategy summary, target definition, runtime mode, and parameter descriptions
+
+For ongoing implementation tracking, see `README_PROGRESS.md`.
 
 ## Current Conclusion
 

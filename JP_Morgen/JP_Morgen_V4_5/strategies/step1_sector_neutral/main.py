@@ -1,62 +1,77 @@
-import os
 import argparse
+import os
+import sys
+from pathlib import Path
+
 import pandas as pd
 
+
+STRATEGY_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = STRATEGY_DIR.parent.parent
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+from backtest import backtest_from_predictions, evaluate
 from config import (
     DEFAULT_AMP_DTYPE,
-    DEFAULT_AMP_MODE,
-    DEFAULT_BATCH_DAYS,
     DEFAULT_D_MODEL,
     DEFAULT_DROPOUT,
     DEFAULT_LISTNET_WEIGHT,
     DEFAULT_LR,
     DEFAULT_NHEAD,
-    DEFAULT_NUM_EPOCHS,
     DEFAULT_NUM_LAYERS,
-    DEFAULT_PATIENCE,
     DEFAULT_REBAL_FREQ,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_N,
 )
-from dataset import process_and_normalize_data
-from trainer import describe_folds, generate_folds, train_one_fold_v4
-from backtest import backtest_from_predictions, evaluate
 from utils import create_run_dirs, get_device, setup_logging
 from visualization import plot_backtest, plot_daily_ic, plot_fold_ic, plot_stock_prediction_rolling
 
+from strategies.step1_sector_neutral.dataset import FORWARD_HORIZON, TARGET_STRATEGY, process_and_normalize_data
+from strategies.step1_sector_neutral.trainer import describe_folds, generate_folds, train_one_fold
 
-STRATEGY_CODE = "baseline_jpmorgen"
-STRATEGY_NAME = "Baseline JPMorgen"
+
+STRATEGY_CODE = "step1_sector_neutral"
+STRATEGY_NAME = "Step1 SectorNeutral"
 STRATEGY_SUMMARY = (
-    "Predict raw 5-day forward returns with the original V4.5 ranking objective "
-    "and keep this setup as the fixed benchmark for later strategy comparisons."
+    "Use 5-day forward returns demeaned within each sector so the model learns "
+    "within-sector stock selection instead of broad sector direction."
 )
-TARGET_DESCRIPTION = "Label = raw 5-day forward return."
+TARGET_DESCRIPTION = (
+    f"Label = stock {FORWARD_HORIZON}-day forward return minus same-day sector mean return."
+)
 TRAINER_DESCRIPTION = (
-    "Baseline trainer preloads all training-day tensors onto the selected device "
-    "before training. This reduces transfer overhead but uses more VRAM."
+    "Notebook-aligned local-memory trainer: precomputed day tensors stay on CPU, "
+    "and each batch moves to GPU only when needed to reduce OOM risk."
 )
-LOG_EXPERIMENT_NAME = "baseline-jpmorgen"
+REFERENCE_NOTEBOOK = "JP_Morgen_V4_MPS.ipynb"
+LOG_EXPERIMENT_NAME = "step1-sector-neutral"
+STEP1_DEFAULT_BATCH_DAYS = 24
+STEP1_DEFAULT_NUM_EPOCHS = 100
+STEP1_DEFAULT_PATIENCE = 15
+STEP1_DEFAULT_AMP_MODE = "off"
+STEP1_DEFAULT_STOCK_PLOT = "AAPL"
+
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="JP Morgan Quant V4.5 Training")
+    parser = argparse.ArgumentParser(description="JP Morgan Quant V4.5 Step1 Sector Neutral Training")
     parser.add_argument("--d_model", type=int, default=DEFAULT_D_MODEL, help="Transformer hidden dim")
     parser.add_argument("--num_layers", type=int, default=DEFAULT_NUM_LAYERS, help="Number of Two-Way blocks")
     parser.add_argument("--nhead", type=int, default=DEFAULT_NHEAD, help="Number of attention heads")
     parser.add_argument("--dropout", type=float, default=DEFAULT_DROPOUT, help="Dropout rate")
     parser.add_argument("--listnet_weight", type=float, default=DEFAULT_LISTNET_WEIGHT, help="Weight of ListNet Loss")
     parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE, help="ListNet temperature")
-    parser.add_argument("--num_epochs", type=int, default=DEFAULT_NUM_EPOCHS, help="Max epochs per fold")
-    parser.add_argument("--patience", type=int, default=DEFAULT_PATIENCE, help="Early stopping patience")
+    parser.add_argument("--num_epochs", type=int, default=STEP1_DEFAULT_NUM_EPOCHS, help="Max epochs per fold")
+    parser.add_argument("--patience", type=int, default=STEP1_DEFAULT_PATIENCE, help="Early stopping patience")
     parser.add_argument("--lr", type=float, default=DEFAULT_LR, help="Learning rate")
-    parser.add_argument("--batch_days", type=int, default=DEFAULT_BATCH_DAYS, help="Days packaged into a batch")
+    parser.add_argument("--batch_days", type=int, default=STEP1_DEFAULT_BATCH_DAYS, help="Days packaged into a batch")
     parser.add_argument("--top_n", type=int, default=DEFAULT_TOP_N, help="Top N stocks")
     parser.add_argument("--rebal_freq", type=int, default=DEFAULT_REBAL_FREQ, help="Rebalance frequency")
-    parser.add_argument("--stock_plot", type=str, default="COP", help="Ticker to visualize")
+    parser.add_argument("--stock_plot", type=str, default=STEP1_DEFAULT_STOCK_PLOT, help="Ticker to visualize")
     parser.add_argument(
         "--amp_mode",
         type=str,
-        default=DEFAULT_AMP_MODE,
+        default=STEP1_DEFAULT_AMP_MODE,
         choices=["auto", "on", "off"],
         help="Use CUDA mixed precision in the forward pass",
     )
@@ -72,8 +87,8 @@ def parse_args():
 
 def build_run_label(args):
     return (
-        "target-raw-forward-return"
-        "__trainer-gpu-preload"
+        f"target-{TARGET_STRATEGY}"
+        f"__trainer-cpu-batch"
         f"__b{args.batch_days}"
         f"__d{args.d_model}-l{args.num_layers}-h{args.nhead}"
         f"__lr{args.lr:g}"
@@ -88,16 +103,25 @@ def build_parameter_manifest(args):
         "num_layers": {"value": args.num_layers, "description": "Number of Two-Way attention blocks."},
         "nhead": {"value": args.nhead, "description": "Attention heads per transformer layer."},
         "dropout": {"value": args.dropout, "description": "Dropout applied in projection and head layers."},
-        "listnet_weight": {"value": args.listnet_weight, "description": "Weight for ListNet ranking loss."},
+        "listnet_weight": {
+            "value": args.listnet_weight,
+            "description": "Weight for ListNet ranking loss; step1 keeps this at 0.0 to match the local baseline.",
+        },
         "temperature": {"value": args.temperature, "description": "ListNet softmax temperature."},
         "num_epochs": {"value": args.num_epochs, "description": "Maximum epochs per fold."},
         "patience": {"value": args.patience, "description": "Early stopping patience after epoch 20."},
         "lr": {"value": args.lr, "description": "AdamW learning rate."},
-        "batch_days": {"value": args.batch_days, "description": "Number of trading days grouped into one training batch."},
+        "batch_days": {
+            "value": args.batch_days,
+            "description": "Number of trading days grouped into one training batch before GPU transfer.",
+        },
         "top_n": {"value": args.top_n, "description": "Top and bottom names used in long-short backtest."},
         "rebal_freq": {"value": args.rebal_freq, "description": "Backtest rebalance interval in trading days."},
         "stock_plot": {"value": args.stock_plot, "description": "Ticker used for rolling prediction visualization."},
-        "amp_mode": {"value": args.amp_mode, "description": "CUDA mixed precision forward mode."},
+        "amp_mode": {
+            "value": args.amp_mode,
+            "description": "CUDA mixed precision forward mode. Step1 default is off for notebook-style stability.",
+        },
         "amp_dtype": {"value": args.amp_dtype, "description": "Mixed precision dtype when AMP is enabled."},
     }
 
@@ -109,9 +133,12 @@ def build_run_manifest(args, device, run_paths):
             "code": STRATEGY_CODE,
             "name": STRATEGY_NAME,
             "summary": STRATEGY_SUMMARY,
+            "target_strategy": TARGET_STRATEGY,
             "target_description": TARGET_DESCRIPTION,
             "trainer_description": TRAINER_DESCRIPTION,
-            "entrypoint": os.path.abspath(__file__),
+            "reference_notebook": REFERENCE_NOTEBOOK,
+            "entrypoint": str((STRATEGY_DIR / "main.py").resolve()),
+            "strategy_dir": str(STRATEGY_DIR.resolve()),
         },
         "runtime": {
             "device": str(device),
@@ -140,6 +167,8 @@ def build_log_header_lines(args, device, run_paths):
         f"  Strategy summary: {STRATEGY_SUMMARY}",
         f"  Target label: {TARGET_DESCRIPTION}",
         f"  Trainer profile: {TRAINER_DESCRIPTION}",
+        f"  Reference notebook: {REFERENCE_NOTEBOOK}",
+        f"  Strategy dir: {STRATEGY_DIR}",
         f"  Device: {device}",
         f"  AMP active: {getattr(args, 'amp_enabled', False)} ({args.amp_dtype})",
         "",
@@ -178,7 +207,7 @@ def main():
     print(f"Forward AMP: {'on' if args.amp_enabled else 'off'} ({args.amp_dtype}) | Loss precision: fp32")
 
     full_data = process_and_normalize_data()
-    valid_dates_dt = [pd.Timestamp(d).to_pydatetime() for d in full_data['valid_dates']]
+    valid_dates_dt = [pd.Timestamp(d).to_pydatetime() for d in full_data["valid_dates"]]
     date_range_years = (max(valid_dates_dt) - min(valid_dates_dt)).days / 365.25
 
     print(f"Data spans {date_range_years:.1f} years")
@@ -195,8 +224,8 @@ def main():
     all_results = []
     fold_metrics = []
     for i, fold in enumerate(folds):
-        print(f"\n{'='*60}\nFold {i+1}/{len(folds)}: test [{fold['test_start'].strftime('%Y-%m-%d')} ~ {fold['test_end'].strftime('%Y-%m-%d')}]\n{'='*60}")
-        result, val_ic, test_ic = train_one_fold_v4(fold, full_data, device, args)
+        print(f"\n{'=' * 60}\nFold {i + 1}/{len(folds)}: test [{fold['test_start'].strftime('%Y-%m-%d')} ~ {fold['test_end'].strftime('%Y-%m-%d')}]\n{'=' * 60}")
+        result, val_ic, test_ic = train_one_fold(fold, full_data, device, args)
         if len(result) > 0:
             all_results.append(result)
             fold_metrics.append(
@@ -216,7 +245,7 @@ def main():
 
     res_final = pd.concat(all_results, ignore_index=True).sort_values("date").reset_index(drop=True)
     metrics_df = pd.DataFrame(fold_metrics)
-    print(f"\n{'='*60}\nV4 Rolling Window Summary\n{'='*60}")
+    print(f"\n{'=' * 60}\nV4 Rolling Window Summary\n{'=' * 60}")
     for _, row in metrics_df.iterrows():
         print(f"  Fold {row['fold']}: Val IC={row['val_ic']:.4f} | Test IC={row['test_ic']:.4f} | [{row['test_start'].strftime('%Y-%m')} ~ {row['test_end'].strftime('%Y-%m')}]")
     print(f"\n  Avg Val IC:  {metrics_df['val_ic'].mean():.4f}")
