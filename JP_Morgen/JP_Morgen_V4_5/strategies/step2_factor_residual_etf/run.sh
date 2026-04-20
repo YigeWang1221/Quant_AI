@@ -1,17 +1,18 @@
 #!/bin/bash
 # shellcheck disable=all
-set -euo pipefail
 
 #SBATCH --job-name=JP_QuantV4_5_Step2ETFResidual
-# SBATCH --partition=sharing
+#SBATCH --partition=gpu-interactive
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --time=00:45:00
+#SBATCH --cpus-per-task=8
+#SBATCH --time=01:00:00
 #SBATCH --mem=12GB
 #SBATCH --gres=gpu:h200:1
 #SBATCH --output=%x_%j.out
 #SBATCH --error=%x_%j.err
+
+set -euo pipefail
 
 preset="${1:-scale_4_277M}"
 if [ "$#" -gt 0 ]; then
