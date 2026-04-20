@@ -1,4 +1,5 @@
 import copy
+import time
 from contextlib import nullcontext
 
 import numpy as np
@@ -83,6 +84,83 @@ def _pad_day_sample(sample, max_stocks):
     return x, y, mask
 
 
+def _amp_context(amp_enabled, amp_dtype):
+    if not amp_enabled:
+        return nullcontext()
+    return torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=True)
+
+
+def _move_to_device(tensor, device):
+    if device.type == "cuda":
+        return tensor.to(device, non_blocking=True)
+    return tensor.to(device)
+
+
+def _stack_batch(batch_samples):
+    xs, ys, masks = zip(*batch_samples)
+    return torch.stack(xs), torch.stack(ys), torch.stack(masks)
+
+
+def _batch_ic_only_loss(pred_batch, y_batch, mask_batch, ic_weight):
+    valid = mask_batch > 0
+    valid_counts = valid.sum(dim=1)
+    valid_rows = valid_counts >= 5
+    if not torch.any(valid_rows):
+        return pred_batch.new_zeros(()), 0.0
+
+    valid_f = valid.float()
+    safe_counts = valid_counts.clamp_min(1).to(pred_batch.dtype)
+    pred_sum = (pred_batch * valid_f).sum(dim=1)
+    target_sum = (y_batch * valid_f).sum(dim=1)
+    pred_centered = (pred_batch - pred_sum.unsqueeze(1) / safe_counts.unsqueeze(1)) * valid_f
+    target_centered = (y_batch - target_sum.unsqueeze(1) / safe_counts.unsqueeze(1)) * valid_f
+
+    sample_denom = (valid_counts - 1).clamp_min(1).to(pred_batch.dtype)
+    pred_std = torch.sqrt(pred_centered.square().sum(dim=1) / sample_denom + 1e-8)
+    target_std = torch.sqrt(target_centered.square().sum(dim=1) / sample_denom + 1e-8)
+    cov = (pred_centered * target_centered).sum(dim=1) / safe_counts
+    ic = cov / (pred_std * target_std + 1e-8)
+
+    loss = ic_weight * (1 - ic[valid_rows]).mean()
+    mean_ic = ic[valid_rows].mean().item()
+    return loss, mean_ic
+
+
+def _batch_loss_and_ic(pred_batch, y_batch, mask_batch, criterion):
+    if criterion.lw == 0:
+        return _batch_ic_only_loss(pred_batch, y_batch, mask_batch, criterion.iw)
+
+    total_loss = pred_batch.new_zeros(())
+    total_ic = 0.0
+    batch_size = pred_batch.shape[0]
+    for i in range(batch_size):
+        loss_i, _, ic_i = criterion(pred_batch[i], y_batch[i], mask_batch[i])
+        total_loss = total_loss + loss_i
+        total_ic += ic_i
+    return total_loss / batch_size, total_ic / batch_size
+
+
+def _predict_by_date(model, daily, dates, max_stocks, device, batch_days, amp_enabled, amp_dtype):
+    predictions = {}
+    for batch_start in range(0, len(dates), batch_days):
+        batch_dates = dates[batch_start:batch_start + batch_days]
+        x_cpu, _, mask_cpu = _stack_batch([_pad_day_sample(daily[dt], max_stocks) for dt in batch_dates])
+        x_batch = _move_to_device(x_cpu, device)
+        mask_batch = _move_to_device(mask_cpu, device)
+
+        with _amp_context(amp_enabled, amp_dtype):
+            pred_batch = model(x_batch, stock_mask=mask_batch)
+        pred_batch = pred_batch.float().cpu()
+        valid_counts = mask_cpu.sum(dim=1).int().tolist()
+
+        for i, dt in enumerate(batch_dates):
+            predictions[dt] = pred_batch[i, :valid_counts[i]].numpy()
+
+        del x_batch, mask_batch, pred_batch, x_cpu, mask_cpu
+
+    return predictions
+
+
 def train_one_fold(fold, full_data, device, args):
     daily = full_data["daily_samples"]
     all_dates = full_data["valid_dates"]
@@ -130,6 +208,7 @@ def train_one_fold(fold, full_data, device, args):
     best_val_ic, best_state, no_improve = -np.inf, None, 0
 
     for ep in range(args.num_epochs):
+        epoch_start = time.perf_counter()
         model.train()
         epoch_loss, epoch_ic, n_batch = 0.0, 0.0, 0
         shuffled = train_dates.copy()
@@ -137,26 +216,16 @@ def train_one_fold(fold, full_data, device, args):
 
         for batch_start in range(0, len(shuffled), args.batch_days):
             batch_dates = shuffled[batch_start:batch_start + args.batch_days]
-            xs, ys, masks = zip(*[precomputed[dt] for dt in batch_dates])
-            x_batch = torch.stack(xs).to(device)
-            y_batch = torch.stack(ys).to(device)
-            mask_batch = torch.stack(masks).to(device)
+            x_cpu, y_cpu, mask_cpu = _stack_batch([precomputed[dt] for dt in batch_dates])
+            x_batch = _move_to_device(x_cpu, device)
+            y_batch = _move_to_device(y_cpu, device)
+            mask_batch = _move_to_device(mask_cpu, device)
 
             optimizer.zero_grad()
-            batch_size = x_batch.shape[0]
-            amp_context = torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp_enabled) if amp_enabled else nullcontext()
-            with amp_context:
-                preds = [model(x_batch[i], stock_mask=mask_batch[i]) for i in range(batch_size)]
-                pred_batch = torch.stack(preds)
+            with _amp_context(amp_enabled, amp_dtype):
+                pred_batch = model(x_batch, stock_mask=mask_batch)
             pred_batch = pred_batch.float()
-
-            total_loss = torch.tensor(0.0, device=device)
-            total_ic = 0.0
-            for i in range(batch_size):
-                loss_i, _, ic_i = criterion(pred_batch[i], y_batch[i], mask_batch[i])
-                total_loss = total_loss + loss_i
-                total_ic += ic_i
-            total_loss = total_loss / batch_size
+            total_loss, total_ic = _batch_loss_and_ic(pred_batch, y_batch, mask_batch, criterion)
 
             if scaler_enabled:
                 scaler.scale(total_loss).backward()
@@ -170,24 +239,29 @@ def train_one_fold(fold, full_data, device, args):
                 optimizer.step()
 
             epoch_loss += total_loss.item()
-            epoch_ic += total_ic / batch_size
+            epoch_ic += total_ic
             n_batch += 1
 
-            del x_batch, y_batch, mask_batch, pred_batch, total_loss
+            del x_batch, y_batch, mask_batch, pred_batch, total_loss, x_cpu, y_cpu, mask_cpu
 
         scheduler.step()
 
         model.eval()
         val_ics = []
         with torch.no_grad():
+            val_predictions = _predict_by_date(
+                model=model,
+                daily=daily,
+                dates=val_dates,
+                max_stocks=max_stocks,
+                device=device,
+                batch_days=args.batch_days,
+                amp_enabled=amp_enabled,
+                amp_dtype=amp_dtype,
+            )
             for dt in val_dates:
                 sample = daily[dt]
-                x_val = torch.FloatTensor(sample["X"]).to(device)
-                amp_context = torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp_enabled) if amp_enabled else nullcontext()
-                with amp_context:
-                    pred_val = model(x_val)
-                pred_val = pred_val.float().cpu().numpy()
-                ic, _ = stats.spearmanr(pred_val, sample["y"])
+                ic, _ = stats.spearmanr(val_predictions[dt], sample["y"])
                 if not np.isnan(ic):
                     val_ics.append(ic)
         val_ic = np.mean(val_ics) if val_ics else 0.0
@@ -204,7 +278,7 @@ def train_one_fold(fold, full_data, device, args):
                 f"    Ep {ep + 1:3d} | Loss:{epoch_loss / max(n_batch, 1):.4f} "
                 f"| Train IC:{epoch_ic / max(n_batch, 1):.4f} "
                 f"| Val IC:{val_ic:.4f} | Best:{best_val_ic:.4f} "
-                f"| P:{no_improve}/{args.patience}"
+                f"| P:{no_improve}/{args.patience} | Sec:{time.perf_counter() - epoch_start:.1f}"
             )
 
         if no_improve >= args.patience and ep >= 20:
@@ -217,15 +291,30 @@ def train_one_fold(fold, full_data, device, args):
     model.eval()
     results = []
     with torch.no_grad():
+        test_predictions = _predict_by_date(
+            model=model,
+            daily=daily,
+            dates=test_dates,
+            max_stocks=max_stocks,
+            device=device,
+            batch_days=args.batch_days,
+            amp_enabled=amp_enabled,
+            amp_dtype=amp_dtype,
+        )
         for dt in test_dates:
             sample = daily[dt]
-            x_test = torch.FloatTensor(sample["X"]).to(device)
-            amp_context = torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp_enabled) if amp_enabled else nullcontext()
-            with amp_context:
-                pred_test = model(x_test)
-            pred_test = pred_test.float().cpu().numpy()
+            pred_test = test_predictions[dt]
+            raw_actuals = sample.get("raw_y", sample["y"])
             for i, ticker in enumerate(sample["tickers"]):
-                results.append({"ticker": ticker, "date": dt, "predicted": pred_test[i], "actual": sample["y"][i]})
+                results.append(
+                    {
+                        "ticker": ticker,
+                        "date": dt,
+                        "predicted": pred_test[i],
+                        "actual": sample["y"][i],
+                        "raw_actual": raw_actuals[i],
+                    }
+                )
 
     result_df = pd.DataFrame(results)
     test_ic = stats.spearmanr(result_df["predicted"], result_df["actual"])[0] if len(result_df) > 0 else 0.0

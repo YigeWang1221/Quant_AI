@@ -3,52 +3,153 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 
-from config import END_DATE, LOOKBACK, MIN_HISTORY_YEARS, MIN_STOCKS_PER_DAY, MIN_STOCKS_RATIO, SCALER_WINDOW, START_DATE, STOCK_SECTOR_MAP
+from config import END_DATE, LOOKBACK, MARKET_TICKERS, MIN_HISTORY_YEARS, MIN_STOCKS_PER_DAY, MIN_STOCKS_RATIO, SCALER_WINDOW, START_DATE
 from data_loader import get_or_load_data
 from features import compute_v3_factors
 
 
 FORWARD_HORIZON = 5
-TARGET_STRATEGY = "sector_neutral"
+TARGET_STRATEGY = "factor_residual_etf"
+DEFAULT_BETA_WINDOW = 120
+DEFAULT_BETA_MIN_OBS = 60
+ETF_PROXY_TICKERS = ("SPY", "QQQ", "XLE", "TLT", "GLD")
 
 
-def build_sector_neutral_targets(raw_data, horizon=FORWARD_HORIZON):
-    raw_forward_returns = {}
+def _build_etf_return_frames(market_data, horizon=FORWARD_HORIZON):
+    etf_close = {}
+    available_proxies = []
+    for ticker in ETF_PROXY_TICKERS:
+        market_name = MARKET_TICKERS.get(ticker)
+        idx_key = f"{market_name}_idx"
+        if market_name in market_data and idx_key in market_data:
+            etf_close[ticker] = pd.Series(market_data[market_name], index=pd.DatetimeIndex(market_data[idx_key])).sort_index()
+            available_proxies.append(ticker)
+
+    if not etf_close:
+        raise ValueError("ETF residual strategy requires cached ETF proxy series in market_data.")
+
+    close_df = pd.DataFrame(etf_close).sort_index()
+    daily_returns = close_df.pct_change()
+    forward_returns = close_df.pct_change(horizon).shift(-horizon)
+    return daily_returns, forward_returns, available_proxies
+
+
+def _estimate_factor_betas(stock_window, factor_window, min_obs):
+    if factor_window.ndim == 1:
+        factor_window = factor_window.reshape(-1, 1)
+    if factor_window.shape[1] == 0:
+        return None
+
+    valid_mask = np.isfinite(stock_window) & np.all(np.isfinite(factor_window), axis=1)
+    if valid_mask.sum() < min_obs:
+        return None
+
+    y = stock_window[valid_mask]
+    x = factor_window[valid_mask]
+    design = np.column_stack([np.ones(len(y)), x])
+
+    try:
+        coeffs, *_ = np.linalg.lstsq(design, y, rcond=None)
+    except np.linalg.LinAlgError:
+        return None
+    return coeffs[1:]
+
+
+def build_factor_residual_targets(
+    raw_data,
+    market_data,
+    horizon=FORWARD_HORIZON,
+    beta_window=DEFAULT_BETA_WINDOW,
+    beta_min_obs=DEFAULT_BETA_MIN_OBS,
+):
+    etf_daily_returns, etf_forward_returns, available_proxies = _build_etf_return_frames(market_data, horizon=horizon)
+
+    factor_residual_targets = {}
+    raw_forward_targets = {}
+    total_target_days = 0
+    residualized_days = 0
+    raw_fallback_days = 0
+
+    forward_factor_cols = [f"{ticker}_fwd" for ticker in available_proxies]
     for ticker, df in raw_data.items():
-        close_series = pd.Series(df["Close"].values.flatten(), index=df.index)
-        raw_forward_returns[ticker] = close_series.pct_change(horizon).shift(-horizon)
+        close_series = pd.Series(df["Close"].values.flatten(), index=df.index).sort_index()
+        stock_daily_returns = close_series.pct_change()
+        stock_forward_returns = close_series.pct_change(horizon).shift(-horizon)
 
-    forward_returns_df = pd.DataFrame(raw_forward_returns).sort_index()
-    sector_neutral_targets = {}
+        combined = pd.DataFrame(
+            {
+                "stock_daily": stock_daily_returns,
+                "stock_forward": stock_forward_returns,
+            }
+        )
+        combined = combined.join(etf_daily_returns[available_proxies], how="left")
+        combined = combined.join(etf_forward_returns[available_proxies].add_suffix("_fwd"), how="left")
+        combined = combined.sort_index()
 
-    sectors = sorted({STOCK_SECTOR_MAP[ticker] for ticker in raw_forward_returns if ticker in STOCK_SECTOR_MAP})
-    for sector in sectors:
-        sector_tickers = [ticker for ticker in raw_forward_returns if STOCK_SECTOR_MAP.get(ticker) == sector]
-        if not sector_tickers:
-            continue
-        sector_mean = forward_returns_df[sector_tickers].mean(axis=1, skipna=True)
-        for ticker in sector_tickers:
-            sector_neutral_targets[ticker] = raw_forward_returns[ticker] - sector_mean
+        stock_daily_arr = combined["stock_daily"].to_numpy(dtype=float)
+        stock_forward_arr = combined["stock_forward"].to_numpy(dtype=float)
+        factor_daily_arr = combined[available_proxies].to_numpy(dtype=float)
+        factor_forward_arr = combined[forward_factor_cols].to_numpy(dtype=float)
 
-    missing_sector_map = [ticker for ticker in raw_forward_returns if ticker not in sector_neutral_targets]
-    if missing_sector_map:
-        print(f"Tickers missing sector map fallback to raw target: {len(missing_sector_map)}")
-        for ticker in missing_sector_map:
-            sector_neutral_targets[ticker] = raw_forward_returns[ticker]
+        residual_values = np.full(len(combined), np.nan, dtype=float)
+        for i in range(len(combined)):
+            raw_target = stock_forward_arr[i]
+            if not np.isfinite(raw_target):
+                continue
 
-    return sector_neutral_targets, raw_forward_returns
+            total_target_days += 1
+            future_factor_returns = factor_forward_arr[i]
+            active_factor_mask = np.isfinite(future_factor_returns)
+
+            if not active_factor_mask.any():
+                residual_values[i] = raw_target
+                raw_fallback_days += 1
+                continue
+
+            start = max(0, i - beta_window + 1)
+            betas = _estimate_factor_betas(
+                stock_daily_arr[start:i + 1],
+                factor_daily_arr[start:i + 1][:, active_factor_mask],
+                beta_min_obs,
+            )
+            if betas is None:
+                residual_values[i] = raw_target
+                raw_fallback_days += 1
+                continue
+
+            residual_values[i] = raw_target - float(np.dot(betas, future_factor_returns[active_factor_mask]))
+            residualized_days += 1
+
+        factor_residual_targets[ticker] = pd.Series(residual_values, index=combined.index, name=ticker)
+        raw_forward_targets[ticker] = pd.Series(stock_forward_arr, index=combined.index, name=ticker)
+
+    residual_ratio = residualized_days / max(total_target_days, 1)
+    print(f"Targets: ETF-residual {horizon}-day forward returns | proxies: {', '.join(available_proxies)}")
+    print(f"Beta estimation: trailing {beta_window} daily returns | min obs {beta_min_obs}")
+    print(f"Residualized labels: {residualized_days}/{total_target_days} ({residual_ratio:.1%}) | raw fallback: {raw_fallback_days}")
+    return factor_residual_targets, raw_forward_targets, available_proxies
 
 
-def process_and_normalize_data(start=START_DATE, end=END_DATE):
+def process_and_normalize_data(
+    start=START_DATE,
+    end=END_DATE,
+    beta_window=DEFAULT_BETA_WINDOW,
+    beta_min_obs=DEFAULT_BETA_MIN_OBS,
+):
     raw_data, market_data, fundamentals = get_or_load_data(start=start, end=end)
 
     sample_ticker = list(raw_data.keys())[0]
     sample_factors = compute_v3_factors(raw_data[sample_ticker], market_data, fundamentals.get(sample_ticker, {}))
-    print("Strategy: Step1 SectorNeutral")
+    print("Strategy: Step2 FactorResidualETF")
     print(f"Factors: {sample_factors.shape[1]}")
 
-    target_by_ticker, raw_target_by_ticker = build_sector_neutral_targets(raw_data, horizon=FORWARD_HORIZON)
-    print(f"Targets: sector-neutral {FORWARD_HORIZON}-day forward returns")
+    target_by_ticker, raw_target_by_ticker, available_proxies = build_factor_residual_targets(
+        raw_data,
+        market_data,
+        horizon=FORWARD_HORIZON,
+        beta_window=beta_window,
+        beta_min_obs=beta_min_obs,
+    )
 
     all_stock = {}
     for ticker, df in raw_data.items():
@@ -163,6 +264,9 @@ def process_and_normalize_data(start=START_DATE, end=END_DATE):
         "tickers_list": tickers_list,
         "num_factors": num_factors,
         "target_strategy": TARGET_STRATEGY,
+        "beta_window": beta_window,
+        "beta_min_obs": beta_min_obs,
+        "etf_proxy_tickers": list(available_proxies),
     }
     print(f"full_data ready | {len(valid_dates)} days | {num_factors} factors")
     return full_data

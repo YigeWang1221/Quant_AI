@@ -48,7 +48,11 @@ def process_and_normalize_data(start=START_DATE, end=END_DATE):
         idx = factors.index.intersection(target.dropna().index)
         if len(idx) == 0:
             continue
-        all_stock[ticker] = {"factors": factors.loc[idx], "target": target.loc[idx]}
+        all_stock[ticker] = {
+            "factors": factors.loc[idx],
+            "target": target.loc[idx],
+            "raw_target": target.loc[idx],
+        }
 
     cutoff = pd.Timestamp.now() - pd.DateOffset(years=MIN_HISTORY_YEARS)
     short_history = [ticker for ticker in all_stock if all_stock[ticker]["factors"].index.min() > cutoff]
@@ -75,6 +79,7 @@ def process_and_normalize_data(start=START_DATE, end=END_DATE):
     for ticker, stock_blob in all_stock.items():
         factors_df = stock_blob["factors"]
         target = stock_blob["target"]
+        raw_target = stock_blob["raw_target"]
         factor_values = factors_df.values
         dates_idx = factors_df.index
         normalized_rows = {}
@@ -88,8 +93,12 @@ def process_and_normalize_data(start=START_DATE, end=END_DATE):
             if scaled.shape != (LOOKBACK, num_factors) or np.any(np.isnan(scaled)):
                 continue
             dt = dates_idx[i]
-            if dt in all_dates_set and not np.isnan(target.iloc[i]):
-                normalized_rows[dt] = {"x": scaled.astype(np.float32), "y": target.iloc[i]}
+            if dt in all_dates_set and not np.isnan(target.iloc[i]) and not np.isnan(raw_target.iloc[i]):
+                normalized_rows[dt] = {
+                    "x": scaled.astype(np.float32),
+                    "y": target.iloc[i],
+                    "raw_y": raw_target.iloc[i],
+                }
 
         if normalized_rows:
             stock_data[ticker] = normalized_rows
@@ -117,14 +126,20 @@ def process_and_normalize_data(start=START_DATE, end=END_DATE):
 
     daily_samples = {}
     for dt in all_dates:
-        day_x, day_y, day_tickers = [], [], []
+        day_x, day_y, day_raw_y, day_tickers = [], [], [], []
         for ticker in tickers_list:
             if dt in stock_data[ticker]:
                 day_x.append(stock_data[ticker][dt]["x"])
                 day_y.append(stock_data[ticker][dt]["y"])
+                day_raw_y.append(stock_data[ticker][dt]["raw_y"])
                 day_tickers.append(ticker)
         if len(day_x) >= MIN_STOCKS_PER_DAY:
-            daily_samples[dt] = {"X": np.stack(day_x), "y": np.array(day_y, dtype=np.float32), "tickers": day_tickers}
+            daily_samples[dt] = {
+                "X": np.stack(day_x),
+                "y": np.array(day_y, dtype=np.float32),
+                "raw_y": np.array(day_raw_y, dtype=np.float32),
+                "tickers": day_tickers,
+            }
 
     valid_dates = sorted(daily_samples.keys())
     n_per_day = [len(daily_samples[dt]["tickers"]) for dt in valid_dates]

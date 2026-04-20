@@ -219,8 +219,17 @@ def train_one_fold_v4(fold, full_data, device, args):
             with amp_context:
                 pred_test = model(x_test)
             pred_test = pred_test.float().cpu().numpy()
+            raw_actuals = sample.get("raw_y", sample["y"])
             for i, ticker in enumerate(sample["tickers"]):
-                results.append({"ticker": ticker, "date": dt, "predicted": pred_test[i], "actual": sample["y"][i]})
+                results.append(
+                    {
+                        "ticker": ticker,
+                        "date": dt,
+                        "predicted": pred_test[i],
+                        "actual": sample["y"][i],
+                        "raw_actual": raw_actuals[i],
+                    }
+                )
 
     result_df = pd.DataFrame(results)
     test_ic = stats.spearmanr(result_df["predicted"], result_df["actual"])[0] if len(result_df) > 0 else 0.0

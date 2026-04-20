@@ -1,258 +1,450 @@
-# JP Morgan Quant V4.5 Update Plan
+# JP Morgan Quant V4.5 Update Timeline
 
-## Overview
+Last updated: 2026-04-20
 
-This document summarizes the next optimization ideas for `JP_Morgen_V4_5`.
+## Purpose
 
-The current `Strategy_JPMorgen` baseline predicts raw 5-day forward returns and trains the model with a per-day cross-sectional ranking objective based on IC and ListNet-style loss. The main question for the next iteration is not whether the label is mathematically valid, but whether too much common market, sector, and factor exposure is still present in the target.
+This file records the project as a timeline.
 
-## Training Commands
+Each node should answer four questions:
 
-The current training script supports both standard precision and forward-only mixed precision experiments.
+- What step was taken?
+- What problem or limitation triggered it?
+- What solution was used?
+- What effect was expected or observed?
 
-Run examples:
+This format is intentional. The project has already gone through one evaluation-semantics error, one baseline CUDA OOM, and one trainer-throughput refactor, so history needs to be readable in order rather than grouped only by topic.
 
-```bash
-python main.py
-python main.py --amp_mode on --amp_dtype float16
-python main.py --amp_mode on --amp_dtype bfloat16
-python main.py --amp_mode off
-python strategies/step1_sector_neutral/main.py
-python strategies/step1_sector_neutral/main.py --batch_days 24 --num_epochs 100 --patience 15 --amp_mode off
-```
+## Timeline
 
-Usage notes:
+### 2026-04-19 | Node 01 | Baseline kept fixed
 
-- `python main.py` uses the default configuration.
-- `--amp_mode on --amp_dtype float16` enables CUDA mixed precision in the forward pass with `float16`.
-- `--amp_mode on --amp_dtype bfloat16` enables CUDA mixed precision in the forward pass with `bfloat16`.
-- `--amp_mode off` forces full precision training.
-- `python strategies/step1_sector_neutral/main.py` runs the Step 1 sector-neutral experiment from its dedicated strategy folder.
-- The intended design is: forward pass may use mixed precision, while loss computation remains in `fp32` for better numerical stability.
+Step:
 
-## Current Implementation Status
+- Preserve the original JPMorgan V4.5 pipeline as the benchmark branch.
 
-As of 2026-04-19, `Strategy_SectorNeutral` has been implemented as a dedicated strategy package:
+Problem:
 
-- `strategies/step1_sector_neutral/main.py`
+- Later target-engineering experiments need one stable comparison point.
+
+Solution:
+
+- Keep the baseline target as raw 5-day forward return.
+- Keep the original baseline architecture and training objective as the reference implementation.
+
+Expected effect:
+
+- All strategy variants can be compared to one consistent benchmark.
+
+Status:
+
+- Completed.
+
+### 2026-04-19 | Node 02 | Step 1 sector-neutral strategy implemented
+
+Step:
+
+- Create `strategies/step1_sector_neutral/`.
+
+Problem:
+
+- The original target can reward sector direction instead of pure stock selection.
+
+Solution:
+
+- Define the Step 1 label as:
+  - stock 5-day forward return
+  - minus same-day sector mean 5-day forward return
+- Keep the strategy isolated in its own folder so baseline files remain unchanged.
+
+Expected effect:
+
+- Push the model toward within-sector relative ranking.
+
+Status:
+
+- Completed.
+
+### 2026-04-19 | Node 03 | Step 2 ETF-residual strategy implemented
+
+Step:
+
+- Create `strategies/step2_factor_residual_etf/`.
+
+Problem:
+
+- Sector-neutral labels remove only one layer of shared movement.
+- Market, style, and ETF-proxy exposures may still dominate the target.
+
+Solution:
+
+- Estimate trailing stock-to-ETF betas from daily return history.
+- Define the Step 2 label as:
+  - raw stock 5-day forward return
+  - minus ETF-implied systematic 5-day forward return
+- Use proxies:
+  - `SPY`
+  - `QQQ`
+  - `XLE`
+  - `TLT`
+  - `GLD`
+
+Expected effect:
+
+- Create a more idiosyncratic label than simple sector demeaning.
+
+Status:
+
+- Completed.
+
+### 2026-04-19 to 2026-04-20 | Node 04 | First comparison produced misleading conclusions
+
+Step:
+
+- Review the first baseline / step1 / step2 comparison.
+
+Observed first-pass interpretation:
+
+- Step 1 looked much better than baseline.
+- Step 1 seemed to work with the original signal direction.
+- Step 2 looked highly regime-sensitive.
+
+Problem:
+
+- Those conclusions were based on a hidden evaluation mismatch.
+
+Root cause:
+
+- `predictions.csv` stored only the training target in the `actual` column.
+- The backtest layer then used `actual` as realized return.
+- This was valid for baseline because baseline target equals raw forward return.
+- This was invalid for Step 1 and Step 2 because their targets are transformed labels.
+
+Impact:
+
+- Baseline PnL remained economically meaningful.
+- Step 1 and Step 2 PnL were not directly comparable to baseline.
+- Signal-direction conclusions drawn from those PnL numbers became unreliable.
+
+Expected effect of fixing it:
+
+- One common realized-return meaning across all strategy branches.
+
+Status:
+
+- Historical issue identified and superseded.
+
+### 2026-04-20 | Node 05 | Evaluation semantics fixed
+
+Step:
+
+- Correct the prediction-output and backtest semantics.
+
+Problem:
+
+- The project needed to preserve both:
+  - transformed training labels for IC evaluation
+  - raw realized returns for economic backtesting
+
+Solution:
+
+- Keep transformed `actual` in prediction outputs for target-space IC evaluation.
+- Add `raw_actual` to prediction outputs.
+- Make backtest and realized-return plots use `raw_actual` when available.
+
+Files touched:
+
+- `dataset.py`
+- `trainer.py`
 - `strategies/step1_sector_neutral/dataset.py`
 - `strategies/step1_sector_neutral/trainer.py`
-- `strategies/step1_sector_neutral/run.sh`
+- `strategies/step2_factor_residual_etf/dataset.py`
+- `backtest.py`
+- `visualization.py`
 
-Current Step 1 defaults are aligned to the locally stable `JP_Morgen_V4_MPS.ipynb` profile:
+Expected effect:
 
-- `batch_days = 24`
+- IC answers:
+  - "did the model rank the chosen target well?"
+- Backtest answers:
+  - "did the model make money on raw forward returns?"
+
+Status:
+
+- Completed.
+
+### 2026-04-20 | Node 06 | Baseline corrected rerun hit CUDA OOM
+
+Step:
+
+- Re-run the benchmark after the evaluation fix.
+
+Problem:
+
+- The baseline trainer preloads all training-day tensors onto GPU.
+- The default baseline configuration used `batch_days = 64`.
+- This combination exceeded the safe memory range on the local RTX 4070 laptop GPU.
+
+Observed failure:
+
+- Run: `V4_5__baseline-jpmorgen__2026-04-20_0027`
+- Error: `torch.cuda.OutOfMemoryError`
+
+Solution:
+
+- Keep the baseline trainer logic unchanged.
+- Re-run baseline safely with `--batch_days 24`.
+
+Successful baseline rerun:
+
+- Run: `V4_5__baseline-jpmorgen__2026-04-20_0028`
+
+Expected effect:
+
+- Preserve a valid corrected baseline comparison without rewriting the baseline trainer.
+
+Status:
+
+- Completed.
+
+### 2026-04-20 | Node 07 | Corrected comparison established
+
+Step:
+
+- Compare baseline, Step 1, and Step 2 again after the evaluation fix.
+
+Reference runs:
+
+- Baseline safe rerun:
+  - `V4_5__baseline-jpmorgen__2026-04-20_0028`
+- Step 1 rerun:
+  - `V4_5__step1-sector-neutral__2026-04-20_0120`
+- Step 2 rerun:
+  - `V4_5__step2-factor-residual-etf__2026-04-20_0219`
+
+Corrected result summary:
+
+- Baseline:
+  - `Avg Val IC = 0.0102`
+  - `Avg Test IC = -0.0040`
+  - `IC gap = 0.0142`
+  - Gross total return = `13.85%`
+  - Net total return = `-12.29%`
+  - Signal direction = `reversed`
+- Step 1:
+  - `Avg Val IC = 0.0208`
+  - `Avg Test IC = 0.0036`
+  - `IC gap = 0.0172`
+  - Gross total return = `17.39%`
+  - Net total return = `-10.81%`
+  - Signal direction = `reversed`
+- Step 2:
+  - `Avg Val IC = 0.0229`
+  - `Avg Test IC = 0.0055`
+  - `IC gap = 0.0174`
+  - Gross total return = `19.99%`
+  - Net total return = `-8.75%`
+  - Signal direction = `reversed`
+
+Additional implementation signal:
+
+- Baseline average turnover ~ `0.662`
+- Step 1 average turnover ~ `0.696`
+- Step 2 average turnover ~ `0.695`
+
+Interpretation:
+
+- Step 2 became the best target-design branch under corrected evaluation.
+- Step 1 remained better than the corrected baseline.
+- All three strategies still lost money net of cost.
+- The remaining blocker looked more like monetization / turnover than raw model size alone.
+
+Expected effect:
+
+- Freeze the corrected strategy ranking before opening a new optimization axis.
+
+Status:
+
+- Completed.
+
+### 2026-04-20 | Node 08 | Trainer throughput bottleneck diagnosed
+
+Step:
+
+- Review CUDA utilization and active trainer structure.
+
+Problem:
+
+- CUDA was not fully utilized even when VRAM was not full.
+- The active Step 1 / Step 2 trainer already had `batch_days`, but still executed:
+  - one forward pass per day inside each batch
+  - one day at a time during validation
+  - one day at a time during test inference
+
+Interpretation:
+
+- The main avoidable bottleneck was Python-loop overhead, not lack of VRAM alone.
+
+Expected effect of addressing it:
+
+- Better throughput without changing the corrected evaluation semantics.
+
+Status:
+
+- Completed.
+
+### 2026-04-20 | Node 09 | Trainer speed fix applied
+
+Step:
+
+- Speed up the active Step 1 / Step 2 trainer without shifting toward a more VRAM-heavy baseline-style preload path.
+
+Problem:
+
+- The current strategy trainer underused batch parallelism.
+
+Solution:
+
+- Extend `QuantV4` and `TwoWayBlock` so they accept batched day tensors.
+- Run one batched forward pass per date batch instead of looping day by day.
+- Batch validation and test inference by date groups.
+- Keep daily tensors on CPU and move only the current batch to GPU.
+- Add a vectorized IC-only loss path for the default `listnet_weight = 0.0` case.
+- Turn CUDA AMP on by default for `step1` and `step2`.
+- Reduce active default `batch_days` from `24` to `20` to avoid pushing activation memory too high.
+
+Files touched:
+
+- `model.py`
+- `config.py`
+- `strategies/step1_sector_neutral/main.py`
+- `strategies/step1_sector_neutral/trainer.py`
+- `strategies/step2_factor_residual_etf/main.py`
+
+Validation:
+
+- `py_compile` passed on the modified files.
+- Vectorized IC-only loss matched the previous loop implementation in a direct numerical check.
+
+Smoke test:
+
+- Run: `V4_5__step2-factor-residual-etf__2026-04-20_0744`
+- Environment: `Quant311`
+- Parameters:
+  - `num_epochs = 2`
+  - `batch_days = 20`
+  - `amp_mode = on`
+- Result:
+  - completed successfully
+  - no CUDA OOM
+
+Expected effect:
+
+- Lower epoch time.
+- Better effective GPU usage.
+- No material increase in persistent GPU memory pressure.
+
+Status:
+
+- Completed.
+
+### 2026-04-20 | Node 10 | Capacity-scaling decision
+
+Step:
+
+- Decide whether to scale the model now or postpone scaling until after more analysis.
+
+Problem:
+
+- The current model is still small:
+  - `d_model = 128`
+  - `num_layers = 3`
+  - `nhead = 4`
+  - about `812,738` parameters
+- This size may be too small to capture richer nonlinear interactions between factors.
+- But corrected net returns are still negative, so aggressive scaling would risk overfit without solving monetization.
+
+Decision:
+
+- Start scaling now, but do it as a controlled experiment rather than a full strategy rewrite.
+
+Why now:
+
+- evaluation semantics are already corrected
+- active trainer overhead has already been reduced
+- AMP is on
+- the memory profile has already been made more conservative
+
+Recommended order:
+
+1. Keep the current fast Step 2 reference:
+   - `d_model = 128`
+   - `num_layers = 3`
+   - `nhead = 4`
+   - `batch_days = 20`
+   - `amp_mode = on`
+2. First expansion:
+   - `d_model = 192`
+   - `num_layers = 4`
+   - `nhead = 6`
+   - start with `batch_days = 20`
+   - if OOM, drop to `16`
+3. Second expansion:
+   - `d_model = 256`
+   - `num_layers = 4`
+   - `nhead = 8`
+   - start with `batch_days = 16`
+
+Promotion rule:
+
+- Keep a larger model only if:
+  - corrected `Avg Test IC` improves
+  - corrected `IC gap` does not widen too much
+  - corrected net return does not deteriorate
+
+Expected effect:
+
+- Test whether moderate extra capacity helps model nonlinear factor structure without mixing in unrelated system changes.
+
+Status:
+
+- Active next step.
+
+## Current Operating Defaults
+
+Active Step 2 defaults:
+
+- `d_model = 128`
+- `num_layers = 3`
+- `nhead = 4`
+- `dropout = 0.15`
+- `lr = 3e-4`
+- `batch_days = 20`
 - `num_epochs = 100`
 - `patience = 15`
-- `amp_mode = off`
-- Trainer memory path: keep precomputed daily tensors on CPU and move each batch to GPU on demand
+- `amp_mode = on`
+- `amp_dtype = float16`
+- `beta_window = 120`
+- `beta_min_obs = 60`
 
-## Logging And Tracking
+## Current Working Conclusions
 
-The baseline entrypoint and the active Step 1 strategy now support clearer experiment artifacts:
+Conclusion 1:
 
-- Run directory names now follow the short pattern `V4_5__strategy-name__timestamp`
-- Stdout and stderr file names now reuse the run name instead of generic `log.out`
-- Each run writes `run_manifest.json` and `run_manifest.txt`
-- The top of the stdout log now includes the strategy summary, target definition, runtime mode, and parameter descriptions
+- Step 2 is the best target-design branch tested so far under corrected evaluation.
 
-For ongoing implementation tracking, see `README_PROGRESS.md`.
+Conclusion 2:
 
-## Current Conclusion
+- The earlier Step 1 "original signal works" story belonged to the buggy evaluation stage and should be treated as historical only.
 
-Cross-sectional demeaning of the target is conceptually reasonable, but in the current implementation it is expected to have very limited impact on training performance.
+Conclusion 3:
 
-Why:
+- Trainer speed was worth fixing before scaling the model because the old Python-loop path was masking how much compute was actually available.
 
-- The current target is the raw `pct_change(5).shift(-5)`.
-- The IC loss already subtracts the daily cross-sectional mean before computing correlation.
-- The ListNet objective is shift-invariant within each day because it applies `softmax(target / temperature)`.
-- Loss is computed day by day, so adding or subtracting the same constant from all stocks on one date does not materially change the ranking objective.
+Conclusion 4:
 
-Because of that, simple target demeaning is more of a semantic cleanup than a high-value experiment. It is unlikely to be the change that turns negative test IC into positive test IC.
+- Now that evaluation and throughput are both cleaner, moderate model scaling is reasonable.
 
-## Main Hypothesis
+Conclusion 5:
 
-The more important issue is that common return components are not removed aggressively enough. The model may still be learning broad market, sector, or style co-movements instead of stock-specific alpha.
-
-That means the next iteration should focus on neutralizing shared exposures rather than only subtracting the daily cross-sectional mean.
-
-## Strategy Candidates
-
-### 1. Strategy_JPMorgen
-
-Current baseline.
-
-- Predict raw 5-day forward return.
-- Train with daily IC/ListNet ranking loss.
-- Keep this version fixed as the reference benchmark.
-
-### 2. Strategy_MarketNeutralDemean
-
-Use:
-
-`y_i = r_i - mean_cross_section(r)`
-
-Goal:
-
-- Learn relative stock strength instead of market direction.
-
-Assessment:
-
-- Easy to implement.
-- High feasibility.
-- Low priority, because it is mostly redundant under the current loss design.
-
-### 3. Strategy_SectorNeutral
-
-Use:
-
-`y_i = r_i - mean_sector(r)`
-
-Goal:
-
-- Remove sector and industry co-movement.
-- Keep within-sector stock selection alpha.
-
-Assessment:
-
-- Low engineering cost.
-- Can directly reuse the existing `STOCK_SECTOR_MAP`.
-- High priority.
-- Best lightweight experiment to run first.
-
-### 4. Strategy_FactorResidual_ETF
-
-Use a rolling regression or rolling beta framework with ETF proxies such as `SPY`, `QQQ`, `XLE`, `TLT`, and `GLD`, then define the label as:
-
-`y_i = r_i - beta_i' f`
-
-Goal:
-
-- Remove broad systematic exposure from the future return label.
-- Train on residual, more idiosyncratic alpha.
-
-Assessment:
-
-- Highest recommendation for the next major experiment.
-- Stronger than simple demeaning because it removes exposure structure, not only average level.
-- Feasible with current data because market ETF series already exist in the project.
-
-### 5. Strategy_FactorResidual_FF5
-
-Use Fama-French factor residuals instead of ETF proxies.
-
-Goal:
-
-- Build a cleaner academic factor-neutral target.
-
-Assessment:
-
-- Strong idea.
-- Higher data and engineering cost than ETF residualization.
-- Good follow-up experiment, but not the first one.
-
-### 6. Strategy_ResidualMomentum
-
-Residualize not only the future label but also return-based input features.
-
-Goal:
-
-- Reduce the chance that the model learns market and sector noise through momentum-style features.
-
-Assessment:
-
-- Medium implementation cost.
-- More suitable after confirming that residual targets help.
-
-### 7. Strategy_VolatilityManaged
-
-Do not change the label first. Instead, scale prediction scores or portfolio weights by volatility at the portfolio construction stage.
-
-Goal:
-
-- Reduce noise from high-volatility names.
-- Improve portfolio Sharpe rather than pure test IC.
-
-Assessment:
-
-- Useful for backtest improvement.
-- Should be treated as a portfolio construction experiment, not a label-design experiment.
-
-### 8. Strategy_TopBottomOrdinal
-
-Replace continuous return labels with quantile or ordinal ranking labels.
-
-Goal:
-
-- Focus the model more directly on top/bottom separability.
-
-Assessment:
-
-- Possible, but requires larger changes to the head and/or loss.
-- Medium priority.
-
-## Recommended Experiment Order
-
-1. Keep `Strategy_JPMorgen` as the fixed baseline.
-2. Implement `Strategy_SectorNeutral`.
-3. Implement `Strategy_FactorResidual_ETF`.
-4. If residual labels help, test `Strategy_ResidualMomentum`.
-5. Run `Strategy_VolatilityManaged` separately at the backtest layer.
-
-## If Only One Optimization Is Chosen
-
-The first choice should not be `Strategy_MarketNeutralDemean`.
-
-The best single next experiment should be:
-
-`Strategy_FactorResidual_ETF`
-
-Reason:
-
-- It removes systematic exposure more effectively than simple demeaning.
-- It can be implemented using data already present in the project.
-- It has the strongest chance of improving true stock-selection signal quality.
-
-## Practical Implementation Notes
-
-For the next version, the most actionable path is:
-
-- Preserve the current baseline pipeline and results.
-- Add a sector-neutral target option using the existing sector map.
-- Add an ETF-residual target option using rolling beta estimation over a 60- to 120-day window.
-- Compare all variants on validation IC, test IC, and long-short backtest metrics.
-- Keep portfolio construction changes separate from target-engineering experiments.
-
-## Planned Update Direction
-
-The intended optimization direction for `JP_Morgen_V4_5` is:
-
-- First test whether sector-neutral labeling improves cross-sectional stability.
-- Then move to ETF-based factor residual labels as the primary next-generation target design.
-- Only after target improvement is validated, consider residualized momentum features and volatility-managed portfolio construction.
-
-This keeps the research path incremental, measurable, and aligned with the current architecture.
-
-## Planned Training Loop Optimization
-
-The next model-side optimization should focus on reducing Python-loop overhead in training rather than changing the strategy logic.
-
-Current bottlenecks:
-
-- Training still runs one forward pass per day inside a Python loop.
-- Loss is also accumulated sample by sample inside Python loops.
-- This limits GPU utilization even when CUDA mixed precision is enabled.
-
-Planned improvement:
-
-- Refactor the model to accept a fully batched tensor instead of running one day at a time.
-- Convert the current per-day loop into a single batched forward call for each training batch.
-- Keep padding and masks, but apply them in vectorized form across the batch.
-- Preserve `fp32` loss computation after the batched predictions are produced.
-
-Expected benefit:
-
-- Better GPU utilization on the local RTX 4070 laptop GPU.
-- More noticeable speedup than AMP alone.
-- No change to the underlying strategy definition or training target.
+- Model scaling should still be treated as a controlled experiment, not as a guaranteed solution to the net-return problem.

@@ -34,12 +34,29 @@ class TwoWayBlock(nn.Module):
         )
 
     def forward(self, x, stock_mask=None):
+        squeeze_batch = x.dim() == 3
+        if squeeze_batch:
+            x = x.unsqueeze(0)
+            if stock_mask is not None:
+                stock_mask = stock_mask.unsqueeze(0)
+
+        batch_size, num_stocks, timesteps, dim = x.shape
+
+        x = x.reshape(batch_size * num_stocks, timesteps, dim)
         x = self.temporal(x)
-        timesteps = x.shape[1]
-        x = x.permute(1, 0, 2)
-        pad_mask = (stock_mask == 0).unsqueeze(0).expand(timesteps, -1) if stock_mask is not None else None
+        x = x.reshape(batch_size, num_stocks, timesteps, dim)
+
+        x = x.permute(0, 2, 1, 3).reshape(batch_size * timesteps, num_stocks, dim)
+        if stock_mask is not None:
+            pad_mask = (stock_mask == 0).unsqueeze(1).expand(-1, timesteps, -1).reshape(batch_size * timesteps, num_stocks)
+        else:
+            pad_mask = None
         x = self.cross_sec(x, src_key_padding_mask=pad_mask)
-        return x.permute(1, 0, 2)
+        x = x.reshape(batch_size, timesteps, num_stocks, dim).permute(0, 2, 1, 3)
+
+        if squeeze_batch:
+            return x.squeeze(0)
+        return x
 
 
 class QuantV4(nn.Module):
@@ -59,10 +76,20 @@ class QuantV4(nn.Module):
                 nn.init.zeros_(module.bias)
 
     def forward(self, x, stock_mask=None):
-        _, timesteps, _ = x.shape
-        x = self.proj(x) + self.t2v(timesteps, x.device).unsqueeze(0)
+        squeeze_batch = x.dim() == 3
+        if squeeze_batch:
+            x = x.unsqueeze(0)
+            if stock_mask is not None:
+                stock_mask = stock_mask.unsqueeze(0)
+
+        _, _, timesteps, _ = x.shape
+        x = self.proj(x) + self.t2v(timesteps, x.device).unsqueeze(0).unsqueeze(0)
         for block in self.blocks:
             x = block(x, stock_mask)
-        weights = torch.softmax(self.pool(x), dim=1)
-        x = (x * weights).sum(dim=1)
-        return self.head(x).squeeze(-1)
+        weights = torch.softmax(self.pool(x), dim=2)
+        x = (x * weights).sum(dim=2)
+        x = self.head(x).squeeze(-1)
+
+        if squeeze_batch:
+            return x.squeeze(0)
+        return x

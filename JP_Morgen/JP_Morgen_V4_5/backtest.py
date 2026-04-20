@@ -4,6 +4,7 @@ import numpy as np
 
 def backtest_from_predictions(res, top_n=3, tx_cost=0.001, rebal_freq=5, rev=False):
     res = res.copy()
+    realized_col = "raw_actual" if "raw_actual" in res.columns else "actual"
     if rev:
         res["predicted"] = -res["predicted"]
     dg = res.groupby("date")
@@ -18,12 +19,23 @@ def backtest_from_predictions(res, top_n=3, tx_cost=0.001, rebal_freq=5, rev=Fal
         g = g.sort_values("predicted", ascending=False)
         lt = set(g.head(top_n)["ticker"])
         st = set(g.tail(top_n)["ticker"])
-        lr = g.head(top_n)["actual"].mean()
-        sr = -g.tail(top_n)["actual"].mean()
+        lr = g.head(top_n)[realized_col].mean()
+        sr = -g.tail(top_n)[realized_col].mean()
         to = (len(lt - pl) + len(st - ps)) / (2 * top_n)
         cost = to * tx_cost * 2
         gross = (lr + sr) / 2
-        rows.append({"date": dt, "long_return": lr, "short_return": sr, "gross_return": gross, "net_return": gross - cost, "turnover": to, "cost": cost})
+        rows.append(
+            {
+                "date": dt,
+                "long_return": lr,
+                "short_return": sr,
+                "gross_return": gross,
+                "net_return": gross - cost,
+                "turnover": to,
+                "cost": cost,
+                "return_source": realized_col,
+            }
+        )
         pl, ps = lt, st
     return pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
 

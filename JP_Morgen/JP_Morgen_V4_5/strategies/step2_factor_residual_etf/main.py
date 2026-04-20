@@ -27,51 +27,61 @@ from config import (
 from utils import create_run_dirs, get_device, setup_logging
 from visualization import plot_backtest, plot_daily_ic, plot_fold_ic, plot_stock_prediction_rolling
 
-from strategies.step1_sector_neutral.dataset import FORWARD_HORIZON, TARGET_STRATEGY, process_and_normalize_data
-from strategies.step1_sector_neutral.trainer import describe_folds, generate_folds, train_one_fold
+from strategies.step2_factor_residual_etf.dataset import (
+    DEFAULT_BETA_MIN_OBS,
+    DEFAULT_BETA_WINDOW,
+    ETF_PROXY_TICKERS,
+    FORWARD_HORIZON,
+    TARGET_STRATEGY,
+    process_and_normalize_data,
+)
+from strategies.step2_factor_residual_etf.trainer import describe_folds, generate_folds, train_one_fold
 
 
-STRATEGY_CODE = "step1_sector_neutral"
-STRATEGY_NAME = "Step1 SectorNeutral"
+STRATEGY_CODE = "step2_factor_residual_etf"
+STRATEGY_NAME = "Step2 FactorResidualETF"
 STRATEGY_SUMMARY = (
-    "Use 5-day forward returns demeaned within each sector so the model learns "
-    "within-sector stock selection instead of broad sector direction."
+    "Use trailing ETF betas to strip out predicted systematic return from each stock's "
+    "5-day forward return so the model trains on a cleaner idiosyncratic target."
 )
 TARGET_DESCRIPTION = (
-    f"Label = stock {FORWARD_HORIZON}-day forward return minus same-day sector mean return."
+    f"Label = stock {FORWARD_HORIZON}-day forward return minus trailing-beta ETF-implied "
+    f"{FORWARD_HORIZON}-day return using {', '.join(ETF_PROXY_TICKERS)}."
 )
 TRAINER_DESCRIPTION = (
     "Notebook-aligned local-memory trainer: precomputed day tensors stay on CPU, "
     "batched forward passes run on GPU, and each batch moves to device only when needed to reduce OOM risk."
 )
 REFERENCE_NOTEBOOK = "JP_Morgen_V4_MPS.ipynb"
-LOG_EXPERIMENT_NAME = "step1-sector-neutral"
-STEP1_DEFAULT_BATCH_DAYS = 20
-STEP1_DEFAULT_NUM_EPOCHS = 100
-STEP1_DEFAULT_PATIENCE = 15
-STEP1_DEFAULT_AMP_MODE = "on"
-STEP1_DEFAULT_STOCK_PLOT = "AAPL"
+LOG_EXPERIMENT_NAME = "step2-factor-residual-etf"
+STEP2_DEFAULT_BATCH_DAYS = 20
+STEP2_DEFAULT_NUM_EPOCHS = 100
+STEP2_DEFAULT_PATIENCE = 15
+STEP2_DEFAULT_AMP_MODE = "on"
+STEP2_DEFAULT_STOCK_PLOT = "AAPL"
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="JP Morgan Quant V4.5 Step1 Sector Neutral Training")
+    parser = argparse.ArgumentParser(description="JP Morgan Quant V4.5 Step2 ETF Residual Training")
     parser.add_argument("--d_model", type=int, default=DEFAULT_D_MODEL, help="Transformer hidden dim")
     parser.add_argument("--num_layers", type=int, default=DEFAULT_NUM_LAYERS, help="Number of Two-Way blocks")
     parser.add_argument("--nhead", type=int, default=DEFAULT_NHEAD, help="Number of attention heads")
     parser.add_argument("--dropout", type=float, default=DEFAULT_DROPOUT, help="Dropout rate")
     parser.add_argument("--listnet_weight", type=float, default=DEFAULT_LISTNET_WEIGHT, help="Weight of ListNet Loss")
     parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE, help="ListNet temperature")
-    parser.add_argument("--num_epochs", type=int, default=STEP1_DEFAULT_NUM_EPOCHS, help="Max epochs per fold")
-    parser.add_argument("--patience", type=int, default=STEP1_DEFAULT_PATIENCE, help="Early stopping patience")
+    parser.add_argument("--num_epochs", type=int, default=STEP2_DEFAULT_NUM_EPOCHS, help="Max epochs per fold")
+    parser.add_argument("--patience", type=int, default=STEP2_DEFAULT_PATIENCE, help="Early stopping patience")
     parser.add_argument("--lr", type=float, default=DEFAULT_LR, help="Learning rate")
-    parser.add_argument("--batch_days", type=int, default=STEP1_DEFAULT_BATCH_DAYS, help="Days packaged into a batch")
+    parser.add_argument("--batch_days", type=int, default=STEP2_DEFAULT_BATCH_DAYS, help="Days packaged into a batch")
     parser.add_argument("--top_n", type=int, default=DEFAULT_TOP_N, help="Top N stocks")
     parser.add_argument("--rebal_freq", type=int, default=DEFAULT_REBAL_FREQ, help="Rebalance frequency")
-    parser.add_argument("--stock_plot", type=str, default=STEP1_DEFAULT_STOCK_PLOT, help="Ticker to visualize")
+    parser.add_argument("--stock_plot", type=str, default=STEP2_DEFAULT_STOCK_PLOT, help="Ticker to visualize")
+    parser.add_argument("--beta_window", type=int, default=DEFAULT_BETA_WINDOW, help="Trailing window for ETF beta estimation")
+    parser.add_argument("--beta_min_obs", type=int, default=DEFAULT_BETA_MIN_OBS, help="Minimum valid daily returns to fit ETF betas")
     parser.add_argument(
         "--amp_mode",
         type=str,
-        default=STEP1_DEFAULT_AMP_MODE,
+        default=STEP2_DEFAULT_AMP_MODE,
         choices=["auto", "on", "off"],
         help="Use CUDA mixed precision in the forward pass",
     )
@@ -89,6 +99,7 @@ def build_run_label(args):
     return (
         f"target-{TARGET_STRATEGY}"
         f"__trainer-cpu-batch"
+        f"__bw{args.beta_window}-mo{args.beta_min_obs}"
         f"__b{args.batch_days}"
         f"__d{args.d_model}-l{args.num_layers}-h{args.nhead}"
         f"__lr{args.lr:g}"
@@ -105,7 +116,7 @@ def build_parameter_manifest(args):
         "dropout": {"value": args.dropout, "description": "Dropout applied in projection and head layers."},
         "listnet_weight": {
             "value": args.listnet_weight,
-            "description": "Weight for ListNet ranking loss; step1 keeps this at 0.0 to match the local baseline.",
+            "description": "Weight for ListNet ranking loss; step2 keeps this at 0.0 to isolate the target change first.",
         },
         "temperature": {"value": args.temperature, "description": "ListNet softmax temperature."},
         "num_epochs": {"value": args.num_epochs, "description": "Maximum epochs per fold."},
@@ -118,9 +129,11 @@ def build_parameter_manifest(args):
         "top_n": {"value": args.top_n, "description": "Top and bottom names used in long-short backtest."},
         "rebal_freq": {"value": args.rebal_freq, "description": "Backtest rebalance interval in trading days."},
         "stock_plot": {"value": args.stock_plot, "description": "Ticker used for rolling prediction visualization."},
+        "beta_window": {"value": args.beta_window, "description": "Trailing daily-return window used to estimate ETF betas."},
+        "beta_min_obs": {"value": args.beta_min_obs, "description": "Minimum valid daily-return observations required to fit ETF betas."},
         "amp_mode": {
             "value": args.amp_mode,
-            "description": "CUDA mixed precision forward mode. Step1 now defaults to on for faster local training.",
+            "description": "CUDA mixed precision forward mode. Step2 now defaults to on for faster local training.",
         },
         "amp_dtype": {"value": args.amp_dtype, "description": "Mixed precision dtype when AMP is enabled."},
     }
@@ -139,6 +152,7 @@ def build_run_manifest(args, device, run_paths):
             "reference_notebook": REFERENCE_NOTEBOOK,
             "entrypoint": str((STRATEGY_DIR / "main.py").resolve()),
             "strategy_dir": str(STRATEGY_DIR.resolve()),
+            "etf_proxy_tickers": list(ETF_PROXY_TICKERS),
         },
         "runtime": {
             "device": str(device),
@@ -167,6 +181,7 @@ def build_log_header_lines(args, device, run_paths):
         f"  Strategy summary: {STRATEGY_SUMMARY}",
         f"  Target label: {TARGET_DESCRIPTION}",
         f"  Trainer profile: {TRAINER_DESCRIPTION}",
+        f"  ETF proxies: {', '.join(ETF_PROXY_TICKERS)}",
         f"  Reference notebook: {REFERENCE_NOTEBOOK}",
         f"  Strategy dir: {STRATEGY_DIR}",
         f"  Device: {device}",
@@ -206,7 +221,8 @@ def main():
         print("AMP requested, but CUDA is unavailable. Falling back to full precision.")
     print(f"Forward AMP: {'on' if args.amp_enabled else 'off'} ({args.amp_dtype}) | Loss precision: fp32")
 
-    full_data = process_and_normalize_data()
+    full_data = process_and_normalize_data(beta_window=args.beta_window, beta_min_obs=args.beta_min_obs)
+    print(f"Active ETF proxies in data: {', '.join(full_data['etf_proxy_tickers'])}")
     valid_dates_dt = [pd.Timestamp(d).to_pydatetime() for d in full_data["valid_dates"]]
     date_range_years = (max(valid_dates_dt) - min(valid_dates_dt)).days / 365.25
 
