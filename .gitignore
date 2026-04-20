@@ -12,5 +12,5 @@ meta.json
 *.pyc
 __pycache__/
 *.pyc
-
+.tmp_paramiko
 

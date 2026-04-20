@@ -334,22 +334,222 @@ Status:
 
 - Completed.
 
+### 2026-04-20 | Node 10 | Remote 4.277M run became the provisional best model
+
+Step:
+
+- Review the remote Step 2 expansion result under the larger `256 / 4 / 8` configuration.
+
+Problem:
+
+- The `2.412M` model improved corrected test IC and net return, but its `IC gap` widened.
+- It was still unclear whether more capacity would help further or simply overfit faster.
+
+Action:
+
+- Use the completed remote run:
+  - `V4_5__step2-factor-residual-etf__2026-04-20_1003`
+- Configuration:
+  - `d_model = 256`
+  - `num_layers = 4`
+  - `nhead = 8`
+  - parameter count = `4,277,122` = `4.277M`
+  - `batch_days = 16`
+  - `amp_mode = on`
+
+Observed result:
+
+- `Avg Val IC = 0.0262`
+- `Avg Test IC = 0.0098`
+- `IC gap = 0.0164`
+- Gross total return = `44.33%`
+- Net total return = `7.64%`
+- Signal direction = `reversed`
+- Positive test folds = `6 / 8`
+
+Comparison across Step 2 model sizes:
+
+- `0.813M`:
+  - `Avg Test IC = 0.0055`
+  - `Net Total = -8.75%`
+  - `IC gap = 0.0174`
+- `2.412M`:
+  - `Avg Test IC = 0.0070`
+  - `Net Total = -1.19%`
+  - `IC gap = 0.0239`
+- `4.277M`:
+  - `Avg Test IC = 0.0098`
+  - `Net Total = 7.64%`
+  - `IC gap = 0.0164`
+
+Interpretation:
+
+- `4.277M` is the strongest Step 2 result seen so far.
+- It is the first tested Step 2 size that turns corrected net return positive.
+- It also avoids the `IC gap` deterioration seen at `2.412M`.
+- However, yearly returns still flip by regime, so the result is promising but not yet fully trusted.
+
+Expected effect:
+
+- Treat `4.277M` as the provisional best model.
+- Do not jump immediately to a larger model.
+- First verify whether the `4.277M` gain is stable enough to reproduce.
+
+Status:
+
+- Completed.
+
+### 2026-04-20 | Node 11 | Next-step decision after 4.277M
+
+Step:
+
+- Decide what to do after the first clearly positive Step 2 net result.
+
+Problem:
+
+- A larger model now looks helpful, but one strong run can still be luck, seed sensitivity, or regime alignment.
+
+Decision:
+
+- Do not scale further immediately.
+- First run a robustness round around `4.277M`.
+
+Recommended next actions:
+
+1. Re-run `4.277M` at least once more with the same config to check repeatability.
+2. Run a full `0.813M` fast-reference training under the new batched trainer so the smallest model is compared apples-to-apples with the new training path.
+3. If `4.277M` remains the best after the repeat, start portfolio-construction tests on top of it:
+   - larger `top_n`
+   - lower `rebal_freq`
+   - score smoothing
+   - no-trade bands
+
+Expected effect:
+
+- Confirm whether the positive net result is robust before opening another capacity axis.
+
+Status:
+
+- Active next step.
+
+### 2026-04-20 | Node 12 | Portfolio-construction layer added to Step 2
+
+Step:
+
+- Implement the first direct portfolio-construction upgrade on top of the Step 2 signal.
+
+Problem:
+
+- `4.277M` became the provisional best model, but the strategy still needed a better trading layer.
+- The project needed direct support for:
+  - larger baskets
+  - score smoothing
+  - no-trade bands
+  - configurable rebalance spacing
+
+Action:
+
+- Extend `backtest.py` with:
+  - score smoothing by ticker
+  - cross-sectional signal normalization
+  - incumbency-aware no-trade-band selection
+- Extend `strategies/step2_factor_residual_etf/main.py` with:
+  - `--score_smooth_window`
+  - `--score_smooth_method`
+  - `--no_trade_band`
+- Save smoothed trade signals into `predictions.csv`
+- Update cluster `run.sh` so the default preset is the `4.277M` model with the new portfolio-construction settings
+
+Proxy calibration:
+
+- A quick local sweep on the `2.412M` predictions suggested the strongest tested setting was:
+  - `top_n = 5`
+  - `rebal_freq = 5`
+  - `score_smooth_method = ewm`
+  - `score_smooth_window = 3`
+  - `no_trade_band = 0.30`
+
+Observed proxy effect on `2.412M` predictions:
+
+- Old combo:
+  - `top_n = 3`
+  - `rebal_freq = 5`
+  - no smoothing
+  - no trade band
+  - net total = `-0.90%`
+- New combo:
+  - `top_n = 5`
+  - `rebal_freq = 5`
+  - `ewm(3)` smoothing
+  - `no_trade_band = 0.30`
+  - net total = `30.92%`
+
+Interpretation:
+
+- Basket widening, smoothing, and a no-trade band materially improved the proxy result.
+- In this proxy check, forcing `rebal_freq = 10` did not beat the stronger `rebal_freq = 5` combination, so the cluster default stayed at `5`.
+
+Expected effect:
+
+- The next `4.277M` cluster run will test the strongest current model with a more stable and less noisy portfolio-construction layer.
+
+Status:
+
+- Completed.
+
+### 2026-04-20 | Node 13 | Cluster launch guard added
+
+Step:
+
+- Fix a cluster execution issue where the Step 2 run appeared to hang without finishing even one epoch.
+
+Problem:
+
+- The log showed:
+  - `Device: cpu`
+  - `AMP active: False`
+  - `batch-loaded to cpu`
+- This meant the job was not actually running on a GPU node.
+- The most likely cause was launching `bash run.sh` on the login node, which ignores `#SBATCH` directives and runs the training directly on CPU.
+
+Action:
+
+- Update `strategies/step2_factor_residual_etf/run.sh` so that:
+  - if no active Slurm allocation exists, the script auto-submits itself with `sbatch`
+  - once inside a job, it prints hostname and CUDA visibility
+  - it runs a fast PyTorch CUDA sanity check before any expensive data processing
+  - it exits immediately with a clear error if CUDA is unavailable
+
+Expected effect:
+
+- Prevent long accidental CPU runs on the login node
+- Make GPU allocation failures obvious in the first few seconds instead of after several minutes
+
+Status:
+
+- Completed.
+
 ## Active Defaults
 
 Current active `step2` defaults:
 
-- `d_model = 128`
-- `num_layers = 3`
-- `nhead = 4`
+- `d_model = 256`
+- `num_layers = 4`
+- `nhead = 8`
 - `dropout = 0.15`
 - `lr = 3e-4`
-- `batch_days = 20`
+- `batch_days = 16`
 - `num_epochs = 100`
 - `patience = 15`
 - `amp_mode = on`
 - `amp_dtype = float16`
 - `beta_window = 120`
 - `beta_min_obs = 60`
+- `top_n = 5`
+- `rebal_freq = 5`
+- `score_smooth_window = 3`
+- `score_smooth_method = ewm`
+- `no_trade_band = 0.30`
 
 Current tested model sizes:
 
@@ -361,7 +561,7 @@ Current tested model sizes:
   - `192 / 4 / 6`
   - `2,412,194` params
   - `2.412M`
-- Larger prepared expansion:
+- Current best tested expansion:
   - `256 / 4 / 8`
   - `4,277,122` params
   - `4.277M`

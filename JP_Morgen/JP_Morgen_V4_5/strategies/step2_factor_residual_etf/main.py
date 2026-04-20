@@ -11,7 +11,7 @@ PROJECT_DIR = STRATEGY_DIR.parent.parent
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from backtest import backtest_from_predictions, evaluate
+from backtest import backtest_from_predictions, evaluate, prepare_backtest_predictions
 from config import (
     DEFAULT_AMP_DTYPE,
     DEFAULT_D_MODEL,
@@ -20,9 +20,7 @@ from config import (
     DEFAULT_LR,
     DEFAULT_NHEAD,
     DEFAULT_NUM_LAYERS,
-    DEFAULT_REBAL_FREQ,
     DEFAULT_TEMPERATURE,
-    DEFAULT_TOP_N,
 )
 from utils import create_run_dirs, get_device, setup_logging
 from visualization import plot_backtest, plot_daily_ic, plot_fold_ic, plot_stock_prediction_rolling
@@ -59,6 +57,11 @@ STEP2_DEFAULT_NUM_EPOCHS = 100
 STEP2_DEFAULT_PATIENCE = 15
 STEP2_DEFAULT_AMP_MODE = "on"
 STEP2_DEFAULT_STOCK_PLOT = "AAPL"
+STEP2_DEFAULT_TOP_N = 5
+STEP2_DEFAULT_REBAL_FREQ = 5
+STEP2_DEFAULT_SCORE_SMOOTH_WINDOW = 3
+STEP2_DEFAULT_SCORE_SMOOTH_METHOD = "ewm"
+STEP2_DEFAULT_NO_TRADE_BAND = 0.30
 
 
 def parse_args():
@@ -73,11 +76,30 @@ def parse_args():
     parser.add_argument("--patience", type=int, default=STEP2_DEFAULT_PATIENCE, help="Early stopping patience")
     parser.add_argument("--lr", type=float, default=DEFAULT_LR, help="Learning rate")
     parser.add_argument("--batch_days", type=int, default=STEP2_DEFAULT_BATCH_DAYS, help="Days packaged into a batch")
-    parser.add_argument("--top_n", type=int, default=DEFAULT_TOP_N, help="Top N stocks")
-    parser.add_argument("--rebal_freq", type=int, default=DEFAULT_REBAL_FREQ, help="Rebalance frequency")
+    parser.add_argument("--top_n", type=int, default=STEP2_DEFAULT_TOP_N, help="Top N stocks")
+    parser.add_argument("--rebal_freq", type=int, default=STEP2_DEFAULT_REBAL_FREQ, help="Rebalance frequency")
     parser.add_argument("--stock_plot", type=str, default=STEP2_DEFAULT_STOCK_PLOT, help="Ticker to visualize")
     parser.add_argument("--beta_window", type=int, default=DEFAULT_BETA_WINDOW, help="Trailing window for ETF beta estimation")
     parser.add_argument("--beta_min_obs", type=int, default=DEFAULT_BETA_MIN_OBS, help="Minimum valid daily returns to fit ETF betas")
+    parser.add_argument(
+        "--score_smooth_window",
+        type=int,
+        default=STEP2_DEFAULT_SCORE_SMOOTH_WINDOW,
+        help="Number of prediction observations used to smooth each ticker's trade score",
+    )
+    parser.add_argument(
+        "--score_smooth_method",
+        type=str,
+        default=STEP2_DEFAULT_SCORE_SMOOTH_METHOD,
+        choices=["off", "sma", "ewm"],
+        help="Smoothing method for trade scores before portfolio construction",
+    )
+    parser.add_argument(
+        "--no_trade_band",
+        type=float,
+        default=STEP2_DEFAULT_NO_TRADE_BAND,
+        help="Incumbency bonus in z-score units before a position is replaced at rebalance",
+    )
     parser.add_argument(
         "--amp_mode",
         type=str,
@@ -104,6 +126,9 @@ def build_run_label(args):
         f"__d{args.d_model}-l{args.num_layers}-h{args.nhead}"
         f"__lr{args.lr:g}"
         f"__ep{args.num_epochs}-p{args.patience}"
+        f"__tn{args.top_n}-rf{args.rebal_freq}"
+        f"__sm-{args.score_smooth_method}{args.score_smooth_window}"
+        f"__ntb{args.no_trade_band:g}"
         f"__amp-{args.amp_mode}"
     )
 
@@ -128,6 +153,18 @@ def build_parameter_manifest(args):
         },
         "top_n": {"value": args.top_n, "description": "Top and bottom names used in long-short backtest."},
         "rebal_freq": {"value": args.rebal_freq, "description": "Backtest rebalance interval in trading days."},
+        "score_smooth_window": {
+            "value": args.score_smooth_window,
+            "description": "Number of per-ticker predictions used for score smoothing before trading.",
+        },
+        "score_smooth_method": {
+            "value": args.score_smooth_method,
+            "description": "Trade-score smoothing method used before rebalance selection.",
+        },
+        "no_trade_band": {
+            "value": args.no_trade_band,
+            "description": "Incumbency bonus in normalized signal units before replacing an existing position.",
+        },
         "stock_plot": {"value": args.stock_plot, "description": "Ticker used for rolling prediction visualization."},
         "beta_window": {"value": args.beta_window, "description": "Trailing daily-return window used to estimate ETF betas."},
         "beta_min_obs": {"value": args.beta_min_obs, "description": "Minimum valid daily-return observations required to fit ETF betas."},
@@ -269,25 +306,56 @@ def main():
     print(f"  IC gap: {metrics_df['val_ic'].mean() - metrics_df['test_ic'].mean():.4f}")
     print(f"  Total predictions: {len(res_final):,}")
 
+    signal_res = prepare_backtest_predictions(
+        res_final,
+        score_smooth_window=args.score_smooth_window,
+        score_smooth_method=args.score_smooth_method,
+    )
+    print("\nPortfolio construction...")
+    print(
+        f"  top_n={args.top_n} | rebal_freq={args.rebal_freq} | "
+        f"score_smooth={args.score_smooth_method}:{args.score_smooth_window} | "
+        f"no_trade_band={args.no_trade_band:.2f}"
+    )
+
     print("\nSignal direction test...")
-    bt_o = backtest_from_predictions(res_final, top_n=args.top_n, rebal_freq=args.rebal_freq, rev=False)
-    bt_r = backtest_from_predictions(res_final, top_n=args.top_n, rebal_freq=args.rebal_freq, rev=True)
+    bt_o = backtest_from_predictions(
+        signal_res,
+        top_n=args.top_n,
+        rebal_freq=args.rebal_freq,
+        rev=False,
+        score_smooth_window=args.score_smooth_window,
+        score_smooth_method=args.score_smooth_method,
+        no_trade_band=args.no_trade_band,
+    )
+    bt_r = backtest_from_predictions(
+        signal_res,
+        top_n=args.top_n,
+        rebal_freq=args.rebal_freq,
+        rev=True,
+        score_smooth_window=args.score_smooth_window,
+        score_smooth_method=args.score_smooth_method,
+        no_trade_band=args.no_trade_band,
+    )
     use_rev = (1 + bt_r["net_return"]).cumprod().iloc[-1] > (1 + bt_o["net_return"]).cumprod().iloc[-1]
     bt_final = bt_r if use_rev else bt_o
     print(f'Using {"reversed" if use_rev else "original"} signal.')
 
-    res_plot = res_final.copy()
+    res_plot = signal_res.copy()
+    res_plot["predicted"] = res_plot["trade_signal"]
     if use_rev:
         res_plot["predicted"] = -res_plot["predicted"]
 
     evaluate(bt_final, rebal_freq=args.rebal_freq)
     plot_fold_ic(metrics_df, res_final, run_paths["img_dir"])
     plot_backtest(bt_final, fold_metrics, res_plot, run_paths["img_dir"])
-    plot_daily_ic(res_plot, run_paths["img_dir"])
-    plot_stock_prediction_rolling(args.stock_plot, res_plot, run_paths["img_dir"])
+    signal_res_to_save = signal_res.copy()
+    signal_res_to_save["trade_signal_active"] = -signal_res_to_save["trade_signal"] if use_rev else signal_res_to_save["trade_signal"]
+    plot_daily_ic(res_final if not use_rev else res_final.assign(predicted=-res_final["predicted"]), run_paths["img_dir"])
+    plot_stock_prediction_rolling(args.stock_plot, res_final if not use_rev else res_final.assign(predicted=-res_final["predicted"]), run_paths["img_dir"])
 
     metrics_df.to_csv(os.path.join(run_paths["run_dir"], "fold_metrics.csv"), index=False)
-    res_final.to_csv(os.path.join(run_paths["run_dir"], "predictions.csv"), index=False)
+    signal_res_to_save.to_csv(os.path.join(run_paths["run_dir"], "predictions.csv"), index=False)
     bt_final.to_csv(os.path.join(run_paths["run_dir"], "backtest.csv"), index=False)
     print(f"[LOG] Saved tabular outputs into {run_paths['run_dir']}")
 
