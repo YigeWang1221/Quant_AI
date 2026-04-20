@@ -273,6 +273,67 @@ Status:
 
 - Active next step.
 
+### 2026-04-20 | Node 09 | Controlled scale scripts created and first medium-scale run completed
+
+Step:
+
+- Create reusable local launch scripts for the active Step 2 branch and run the first medium-size expansion.
+
+Problem:
+
+- Capacity experiments need to be repeatable.
+- The project needed a clean way to compare the current fast reference against larger models without editing arguments by hand every time.
+
+Action:
+
+- Add local PowerShell launchers:
+  - `run_local_fast.ps1`
+  - `run_local_scale_2_412M.ps1`
+  - `run_local_scale_4_277M.ps1`
+- Start the first expansion:
+  - `d_model = 192`
+  - `num_layers = 4`
+  - `nhead = 6`
+  - parameter count = `2,412,194` = `2.412M`
+  - `batch_days = 20`
+  - `amp_mode = on`
+
+Observed result:
+
+- Run: `V4_5__step2-factor-residual-etf__2026-04-20_0758`
+- Completed successfully with no CUDA OOM
+- `Avg Val IC = 0.0309`
+- `Avg Test IC = 0.0070`
+- `IC gap = 0.0239`
+- Gross total return = `30.29%`
+- Net total return = `-1.19%`
+- Signal direction = `original`
+
+Comparison versus the current fast Step 2 reference (`0.813M`):
+
+- Parameter count:
+  - `0.813M` -> `2.412M`
+- Corrected `Avg Test IC`:
+  - `0.0055` -> `0.0070`
+- Corrected net total return:
+  - `-8.75%` -> `-1.19%`
+- `IC gap`:
+  - `0.0174` -> `0.0239`
+
+Interpretation:
+
+- The first controlled capacity increase improved corrected test IC.
+- It also improved corrected net return materially.
+- The larger gap means overfitting risk increased, but the result is still strong enough to justify a second controlled scale test.
+
+Expected effect:
+
+- Use the `2.412M` result as the new reference point for deciding whether `4.277M` is worth running.
+
+Status:
+
+- Completed.
+
 ## Active Defaults
 
 Current active `step2` defaults:
@@ -289,6 +350,21 @@ Current active `step2` defaults:
 - `amp_dtype = float16`
 - `beta_window = 120`
 - `beta_min_obs = 60`
+
+Current tested model sizes:
+
+- Fast reference:
+  - `128 / 3 / 4`
+  - `812,738` params
+  - `0.813M`
+- Medium expansion:
+  - `192 / 4 / 6`
+  - `2,412,194` params
+  - `2.412M`
+- Larger prepared expansion:
+  - `256 / 4 / 8`
+  - `4,277,122` params
+  - `4.277M`
 
 ## Current File Anchors
 
