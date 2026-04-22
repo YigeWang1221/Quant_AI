@@ -1,6 +1,6 @@
 # JP Morgan Quant V4.5 Progress Timeline
 
-Last updated: 2026-04-20
+Last updated: 2026-04-21
 
 ## Purpose And Maintenance Rules
 
@@ -8,6 +8,8 @@ Purpose:
 
 - This file records the current working recommendation, stage-by-stage progress, and active defaults.
 - Use it to answer "what should the next step be now?" rather than only "what changed historically?"
+- Treat this as the L1 project-state layer.
+- Pair it with `MODULES.md` for current module contracts before loading full code.
 
 Maintenance rules:
 
@@ -16,6 +18,7 @@ Maintenance rules:
 - Progress nodes may include theory, interpretation, and stage conclusions, not only code changes.
 - When the recommended next step changes, update both the top recommendation and the relevant timeline node.
 - When a new validation tool becomes part of the workflow, record both why it is needed and where the file lives.
+- When module interfaces or output schemas change, update `MODULES.md` in the same change.
 
 ## Current Recommendation
 
@@ -146,6 +149,14 @@ Top-level files:
   - shared plots for fold IC, strategy curve, daily IC, and rolling stock predictions
 - `evaluate_saved_predictions.py`
   - offline portfolio sweep over saved `predictions.csv`
+- `MODULES.md`
+  - L2 module contracts, shapes, schemas, and dependency map
+- `PROJECT_KNOWLEDGE.md`
+  - shared project-knowledge file for Codex + Claude Code
+- `AGENTS.md`
+  - single authoritative agent doc for Codex + Claude Code
+- `CLAUDE.md`
+  - compatibility pointer back to `AGENTS.md`
 - `README_PROGRESS.md`
   - current recommendation, stage interpretation, defaults, and decision rules
 - `README_UPDATE.md`
@@ -236,6 +247,33 @@ Action:
 Expected effect:
 
 - All later strategy branches can be compared against one stable benchmark.
+
+Status:
+
+- Completed.
+
+### 2026-04-21 | Node 20 | Single-source agent doc and shared project knowledge were unified
+
+Step:
+
+- Collapse the AI guidance layer into one authoritative agent doc plus one shared project-knowledge file.
+
+Problem:
+
+- Keeping separate full agent documents for Codex and Claude Code creates drift pressure.
+- Even if both start identical, they can diverge later and split the project's operating rules.
+
+Action:
+
+- Keep `AGENTS.md` as the only authoritative agent-policy document.
+- Add `PROJECT_KNOWLEDGE.md` as the shared compact knowledge file for mixed Codex + Claude Code usage.
+- Reduce `CLAUDE.md` to a compatibility pointer back to `AGENTS.md` so Claude-specific onboarding does not become a second source of truth.
+
+Expected effect:
+
+- One stable place for agent policy.
+- One stable place for project knowledge.
+- Lower risk that Claude Code and Codex sessions evolve different working rules over time.
 
 Status:
 
@@ -912,6 +950,45 @@ Status:
 
 - Completed.
 
+### 2026-04-21 | Node 19 | Module-contract layer and AI prompt scaffolds added
+
+Step:
+
+- Add a dedicated L2 context layer for current module contracts and future AI sessions.
+
+Problem:
+
+- The timeline files explain project history and current recommendation, but not the live wiring between modules.
+- That forced every new AI conversation to rebuild:
+  - tensor shapes
+  - CSV meaning
+  - active trainer ownership
+  - which files are stable versus active
+
+Action:
+
+- Add `MODULES.md` as the project's L2 module-contract snapshot.
+- Add `AGENTS.md` and `CLAUDE.md` with task-specific context-loading rules:
+  - architecture / model
+  - evaluation / backtest
+  - data pipeline
+  - results analysis
+  - performance
+- Explicitly document:
+  - `actual` versus `raw_actual`
+  - the active Step 2 path
+  - the Step 2 trainer re-export pattern
+  - file-freezing and diff-first workflow
+
+Expected effect:
+
+- Most future AI turns can restart from `README_PROGRESS.md` + `MODULES.md` without first re-reading the entire codebase.
+- Architecture and bug-fix sessions should stay narrower because write scope and task templates are now explicit.
+
+Status:
+
+- Completed.
+
 ## Active Defaults
 
 Current active `step2` defaults:
@@ -966,3 +1043,11 @@ Current tested model sizes:
   - `visualization.py`
 - Offline portfolio sweep:
   - `evaluate_saved_predictions.py`
+- Shared project knowledge:
+  - `PROJECT_KNOWLEDGE.md`
+- L2 module contracts:
+  - `MODULES.md`
+- Authoritative agent doc:
+  - `AGENTS.md`
+- Claude compatibility pointer:
+  - `CLAUDE.md`
