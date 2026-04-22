@@ -1,0 +1,223 @@
+============================================================
+  Run:  V4_5__step2-factor-residual-etf__2026-04-20_1756
+  Dir:  /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/
+  Out:  V4_5__step2-factor-residual-etf__2026-04-20_1756.out
+  Err:  V4_5__step2-factor-residual-etf__2026-04-20_1756.err
+  Img:  img/
+  Meta: run_manifest.json | run_manifest.txt
+============================================================
+Experiment Manifest
+  Strategy code: step2_factor_residual_etf
+  Strategy name: Step2 FactorResidualETF
+  Strategy summary: Use trailing ETF betas to strip out predicted systematic return from each stock's 5-day forward return so the model trains on a cleaner idiosyncratic target.
+  Target label: Label = stock 5-day forward return minus trailing-beta ETF-implied 5-day return using SPY, QQQ, XLE, TLT, GLD.
+  Trainer profile: Notebook-aligned local-memory trainer: precomputed day tensors stay on CPU, batched forward passes run on GPU, and each batch moves to device only when needed to reduce OOM risk.
+  ETF proxies: SPY, QQQ, XLE, TLT, GLD
+  Reference notebook: JP_Morgen_V4_MPS.ipynb
+  Strategy dir: /home/wang.yige/7380/JP_Morgen_V4_5/strategies/step2_factor_residual_etf
+  Device: cuda
+  AMP active: True (float16)
+
+Loaded Parameters
+  d_model=256 | Transformer hidden dimension.
+  num_layers=4 | Number of Two-Way attention blocks.
+  nhead=8 | Attention heads per transformer layer.
+  dropout=0.15 | Dropout applied in projection and head layers.
+  listnet_weight=0.0 | Weight for ListNet ranking loss; step2 keeps this at 0.0 to isolate the target change first.
+  temperature=1.0 | ListNet softmax temperature.
+  num_epochs=100 | Maximum epochs per fold.
+  patience=15 | Early stopping patience after epoch 20.
+  lr=0.0003 | AdamW learning rate.
+  batch_days=16 | Number of trading days grouped into one training batch before GPU transfer.
+  top_n=5 | Top and bottom names used in long-short backtest.
+  rebal_freq=5 | Backtest rebalance interval in trading days.
+  score_smooth_window=3 | Number of per-ticker predictions used for score smoothing before trading.
+  score_smooth_method=ewm | Trade-score smoothing method used before rebalance selection.
+  no_trade_band=0.3 | Incumbency bonus in normalized signal units before replacing an existing position.
+  stock_plot=AAPL | Ticker used for rolling prediction visualization.
+  beta_window=120 | Trailing daily-return window used to estimate ETF betas.
+  beta_min_obs=60 | Minimum valid daily-return observations required to fit ETF betas.
+  amp_mode=on | CUDA mixed precision forward mode. Step2 now defaults to on for faster local training.
+  amp_dtype=float16 | Mixed precision dtype when AMP is enabled.
+
+Artifact Files
+  stdout: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/V4_5__step2-factor-residual-etf__2026-04-20_1756.out
+  stderr: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/V4_5__step2-factor-residual-etf__2026-04-20_1756.err
+  manifest_json: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/run_manifest.json
+  manifest_txt: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/run_manifest.txt
+
+
+Strategy variant: Step2 FactorResidualETF
+Hyperparameters: {'d_model': 256, 'num_layers': 4, 'nhead': 8, 'dropout': 0.15, 'listnet_weight': 0.0, 'temperature': 1.0, 'num_epochs': 100, 'patience': 15, 'lr': 0.0003, 'batch_days': 16, 'top_n': 5, 'rebal_freq': 5, 'stock_plot': 'AAPL', 'beta_window': 120, 'beta_min_obs': 60, 'score_smooth_window': 3, 'score_smooth_method': 'ewm', 'no_trade_band': 0.3, 'amp_mode': 'on', 'amp_dtype': 'float16', 'amp_enabled': True}
+Forward AMP: on (float16) | Loss precision: fp32
+OK: local [2018-01-01 ~ 2025-12-31] covers [2018-01-01 ~ 2025-12-31]
+Loaded 223 stocks [2018-01-01 ~ 2025-12-31]
+Strategy: Step2 FactorResidualETF
+Factors: 35
+Targets: ETF-residual 5-day forward returns | proxies: SPY, QQQ, XLE, TLT, GLD
+Beta estimation: trailing 120 daily returns | min obs 60
+Residualized labels: 413943/427323 (96.9%) | raw fallback: 13380
+Removing 2 stocks with < 4 years
+Keeping 221 stocks | 35 factors
+Valid days: 1945 | 2018-03-29 ~ 2025-12-22
+Dropped 0 stocks in normalization
+Stocks with data: 221
+Daily dataset: 1865 days | stocks/day: 192-221 (avg 212)
+full_data ready | 1865 days | 35 factors
+Active ETF proxies in data: SPY, QQQ, XLE, TLT, GLD
+Data spans 7.4 years
+8 folds
+  Fold 1: Train [2018-07~2021-07] Val [2021-07~2022-01] Test [2022-01~2022-07] (756/126/125)
+  Fold 2: Train [2018-07~2022-01] Val [2022-01~2022-07] Test [2022-07~2023-01] (882/125/126)
+  Fold 3: Train [2018-07~2022-07] Val [2022-07~2023-01] Test [2023-01~2023-07] (1007/126/124)
+  Fold 4: Train [2018-07~2023-01] Val [2023-01~2023-07] Test [2023-07~2024-01] (1133/124/127)
+  Fold 5: Train [2018-07~2023-07] Val [2023-07~2024-01] Test [2024-01~2024-07] (1257/127/125)
+  Fold 6: Train [2018-07~2024-01] Val [2024-01~2024-07] Test [2024-07~2025-01] (1384/125/126)
+  Fold 7: Train [2018-07~2024-07] Val [2024-07~2025-01] Test [2025-01~2025-07] (1509/126/124)
+  Fold 8: Train [2018-07~2025-01] Val [2025-01~2025-07] Test [2025-07~2025-12] (1635/124/105)
+
+============================================================
+Fold 1/8: test [2022-01-24 ~ 2022-07-24]
+============================================================
+  Train: 756 | Val: 126 | Test: 125 days
+  Precomputed 756 days (stored on cpu, batch-loaded to cuda)
+    Ep  10 | Loss:0.4741 | Train IC:0.5259 | Val IC:0.0039 | Best:0.0259 | P:1/15 | Sec:2.9
+    Ep  20 | Loss:0.3051 | Train IC:0.6949 | Val IC:0.0145 | Best:0.0259 | P:11/15 | Sec:2.9
+    Early stop at epoch 24
+  Done | Test IC: -0.0209 | Best Val IC: 0.0259
+
+
+============================================================
+Fold 2/8: test [2022-07-24 ~ 2023-01-24]
+============================================================
+  Train: 882 | Val: 125 | Test: 126 days
+  Precomputed 882 days (stored on cpu, batch-loaded to cuda)
+    Ep  10 | Loss:0.4833 | Train IC:0.5167 | Val IC:0.0058 | Best:0.0072 | P:3/15 | Sec:3.4
+    Ep  20 | Loss:0.3154 | Train IC:0.6846 | Val IC:-0.0025 | Best:0.0072 | P:13/15 | Sec:3.4
+    Early stop at epoch 22
+  Done | Test IC: 0.0146 | Best Val IC: 0.0072
+
+
+============================================================
+Fold 3/8: test [2023-01-24 ~ 2023-07-24]
+============================================================
+  Train: 1007 | Val: 126 | Test: 124 days
+  Precomputed 1007 days (stored on cpu, batch-loaded to cuda)
+    Ep  10 | Loss:0.4563 | Train IC:0.5437 | Val IC:-0.0105 | Best:0.0137 | P:6/15 | Sec:3.8
+    Ep  20 | Loss:0.2997 | Train IC:0.7003 | Val IC:-0.0069 | Best:0.0137 | P:16/15 | Sec:3.9
+    Early stop at epoch 21
+  Done | Test IC: 0.0008 | Best Val IC: 0.0137
+
+
+============================================================
+Fold 4/8: test [2023-07-24 ~ 2024-01-24]
+============================================================
+  Train: 1133 | Val: 124 | Test: 127 days
+  Precomputed 1133 days (stored on cpu, batch-loaded to cuda)
+    Ep  10 | Loss:0.4611 | Train IC:0.5389 | Val IC:-0.0115 | Best:0.0386 | P:9/15 | Sec:4.3
+    Ep  20 | Loss:0.3077 | Train IC:0.6923 | Val IC:0.0144 | Best:0.0386 | P:19/15 | Sec:4.3
+    Early stop at epoch 21
+  Done | Test IC: 0.0206 | Best Val IC: 0.0386
+
+
+============================================================
+Fold 5/8: test [2024-01-24 ~ 2024-07-24]
+============================================================
+  Train: 1257 | Val: 127 | Test: 125 days
+  Precomputed 1257 days (stored on cpu, batch-loaded to cuda)
+    Ep  10 | Loss:0.5079 | Train IC:0.4921 | Val IC:-0.0061 | Best:0.0276 | P:6/15 | Sec:4.7
+    Ep  20 | Loss:0.3380 | Train IC:0.6620 | Val IC:-0.0311 | Best:0.0276 | P:16/15 | Sec:4.7
+    Early stop at epoch 21
+  Done | Test IC: -0.0069 | Best Val IC: 0.0276
+
+
+============================================================
+Fold 6/8: test [2024-07-24 ~ 2025-01-24]
+============================================================
+  Train: 1384 | Val: 125 | Test: 126 days
+  Precomputed 1384 days (stored on cpu, batch-loaded to cuda)
+    Ep  10 | Loss:0.4950 | Train IC:0.5050 | Val IC:0.0133 | Best:0.0211 | P:5/15 | Sec:5.2
+    Ep  20 | Loss:0.3319 | Train IC:0.6681 | Val IC:0.0108 | Best:0.0211 | P:15/15 | Sec:5.2
+    Early stop at epoch 21
+  Done | Test IC: 0.0189 | Best Val IC: 0.0211
+
+
+============================================================
+Fold 7/8: test [2025-01-24 ~ 2025-07-24]
+============================================================
+  Train: 1509 | Val: 126 | Test: 124 days
+  Precomputed 1509 days (stored on cpu, batch-loaded to cuda)
+    Ep  10 | Loss:0.4910 | Train IC:0.5090 | Val IC:0.0062 | Best:0.0389 | P:6/15 | Sec:5.7
+    Ep  20 | Loss:0.3237 | Train IC:0.6763 | Val IC:0.0184 | Best:0.0389 | P:16/15 | Sec:5.6
+    Early stop at epoch 21
+  Done | Test IC: -0.0220 | Best Val IC: 0.0389
+
+
+============================================================
+Fold 8/8: test [2025-07-24 ~ 2025-12-22]
+============================================================
+  Train: 1635 | Val: 124 | Test: 105 days
+  Precomputed 1635 days (stored on cpu, batch-loaded to cuda)
+    Ep  10 | Loss:0.4828 | Train IC:0.5172 | Val IC:-0.0091 | Best:0.0155 | P:8/15 | Sec:6.1
+    Ep  20 | Loss:0.3260 | Train IC:0.6740 | Val IC:-0.0034 | Best:0.0155 | P:18/15 | Sec:6.1
+    Early stop at epoch 21
+  Done | Test IC: 0.0203 | Best Val IC: 0.0155
+
+
+============================================================
+V4 Rolling Window Summary
+============================================================
+  Fold 1: Val IC=0.0259 | Test IC=-0.0209 | [2022-01 ~ 2022-07]
+  Fold 2: Val IC=0.0072 | Test IC=0.0146 | [2022-07 ~ 2023-01]
+  Fold 3: Val IC=0.0137 | Test IC=0.0008 | [2023-01 ~ 2023-07]
+  Fold 4: Val IC=0.0386 | Test IC=0.0206 | [2023-07 ~ 2024-01]
+  Fold 5: Val IC=0.0276 | Test IC=-0.0069 | [2024-01 ~ 2024-07]
+  Fold 6: Val IC=0.0211 | Test IC=0.0189 | [2024-07 ~ 2025-01]
+  Fold 7: Val IC=0.0389 | Test IC=-0.0220 | [2025-01 ~ 2025-07]
+  Fold 8: Val IC=0.0155 | Test IC=0.0203 | [2025-07 ~ 2025-12]
+
+  Avg Val IC:  0.0236
+  Avg Test IC: 0.0032
+  IC gap: 0.0204
+  Total predictions: 216,808
+
+Portfolio construction...
+  top_n=5 | rebal_freq=5 | score_smooth=ewm:3 | no_trade_band=0.30
+
+Signal direction test...
+Using reversed signal.
+
+  =============================================
+  Gross
+  =============================================
+    Total:  7.97%
+    Annual: 1.98%
+    Vol:    18.89%
+    Sharpe: -0.11
+    MaxDD:  -24.84%
+    WinRate:47%
+
+  =============================================
+  Net
+  =============================================
+    Total:  -12.08%
+    Annual: -3.24%
+    Vol:    18.89%
+    Sharpe: -0.38
+    MaxDD:  -31.62%
+    WinRate:46%
+
+  =============================================
+  By Year
+  =============================================
+    2022: Ret=-6.59% Sharpe=-0.29 N=48
+    2023: Ret=34.48% Sharpe=1.42 N=50
+    2024: Ret=-6.91% Sharpe=-0.42 N=50
+    2025: Ret=-24.82% Sharpe=-1.52 N=49
+[LOG] Saved: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/img/01_V4_fold_ic.png
+[LOG] Saved: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/img/02_V4_strategy_results.png
+Mean IC: 0.0008 | Std: 0.1077 | IR: 0.0075 | IC>0: 50%
+[LOG] Saved: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/img/03_V4_daily_ic.png
+[LOG] Saved: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/img/04_AAPL_V4.png
+AAPL: 982 samples | Dir acc: 46.9% | Corr: -0.0167
+[LOG] Saved tabular outputs into /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756

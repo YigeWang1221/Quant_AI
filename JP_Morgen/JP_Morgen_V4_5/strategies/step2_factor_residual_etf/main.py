@@ -16,13 +16,16 @@ from config import (
     DEFAULT_AMP_DTYPE,
     DEFAULT_D_MODEL,
     DEFAULT_DROPOUT,
+    DEFAULT_EARLY_STOP_MIN_DELTA,
+    DEFAULT_GRAD_CLIP_NORM,
     DEFAULT_LISTNET_WEIGHT,
     DEFAULT_LR,
     DEFAULT_NHEAD,
     DEFAULT_NUM_LAYERS,
     DEFAULT_TEMPERATURE,
+    DEFAULT_WEIGHT_DECAY,
 )
-from utils import create_run_dirs, get_device, setup_logging
+from utils import create_run_dirs, get_device, set_random_seed, setup_logging
 from visualization import plot_backtest, plot_daily_ic, plot_fold_ic, plot_stock_prediction_rolling
 
 from strategies.step2_factor_residual_etf.dataset import (
@@ -74,8 +77,18 @@ def parse_args():
     parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE, help="ListNet temperature")
     parser.add_argument("--num_epochs", type=int, default=STEP2_DEFAULT_NUM_EPOCHS, help="Max epochs per fold")
     parser.add_argument("--patience", type=int, default=STEP2_DEFAULT_PATIENCE, help="Early stopping patience")
+    parser.add_argument(
+        "--early_stop_min_delta",
+        type=float,
+        default=DEFAULT_EARLY_STOP_MIN_DELTA,
+        help="Minimum validation-IC improvement required to reset early stopping patience",
+    )
     parser.add_argument("--lr", type=float, default=DEFAULT_LR, help="Learning rate")
+    parser.add_argument("--weight_decay", type=float, default=DEFAULT_WEIGHT_DECAY, help="AdamW weight decay")
+    parser.add_argument("--grad_clip_norm", type=float, default=DEFAULT_GRAD_CLIP_NORM, help="Gradient clipping max norm; use 0 to disable")
     parser.add_argument("--batch_days", type=int, default=STEP2_DEFAULT_BATCH_DAYS, help="Days packaged into a batch")
+    parser.add_argument("--seed", type=int, default=None, help="Base random seed for reproducible fold training")
+    parser.add_argument("--deterministic", action="store_true", help="Request deterministic PyTorch algorithms where supported")
     parser.add_argument("--top_n", type=int, default=STEP2_DEFAULT_TOP_N, help="Top N stocks")
     parser.add_argument("--rebal_freq", type=int, default=STEP2_DEFAULT_REBAL_FREQ, help="Rebalance frequency")
     parser.add_argument("--stock_plot", type=str, default=STEP2_DEFAULT_STOCK_PLOT, help="Ticker to visualize")
@@ -118,6 +131,8 @@ def parse_args():
 
 
 def build_run_label(args):
+    seed_suffix = "" if args.seed is None else f"__seed{args.seed}"
+    deterministic_suffix = "__det" if args.deterministic else ""
     return (
         f"target-{TARGET_STRATEGY}"
         f"__trainer-cpu-batch"
@@ -125,11 +140,15 @@ def build_run_label(args):
         f"__b{args.batch_days}"
         f"__d{args.d_model}-l{args.num_layers}-h{args.nhead}"
         f"__lr{args.lr:g}"
+        f"__wd{args.weight_decay:g}"
         f"__ep{args.num_epochs}-p{args.patience}"
+        f"__esd{args.early_stop_min_delta:g}"
         f"__tn{args.top_n}-rf{args.rebal_freq}"
         f"__sm-{args.score_smooth_method}{args.score_smooth_window}"
         f"__ntb{args.no_trade_band:g}"
         f"__amp-{args.amp_mode}"
+        f"{seed_suffix}"
+        f"{deterministic_suffix}"
     )
 
 
@@ -146,10 +165,21 @@ def build_parameter_manifest(args):
         "temperature": {"value": args.temperature, "description": "ListNet softmax temperature."},
         "num_epochs": {"value": args.num_epochs, "description": "Maximum epochs per fold."},
         "patience": {"value": args.patience, "description": "Early stopping patience after epoch 20."},
+        "early_stop_min_delta": {
+            "value": args.early_stop_min_delta,
+            "description": "Minimum validation-IC improvement needed before patience resets.",
+        },
         "lr": {"value": args.lr, "description": "AdamW learning rate."},
+        "weight_decay": {"value": args.weight_decay, "description": "AdamW weight decay strength."},
+        "grad_clip_norm": {"value": args.grad_clip_norm, "description": "Gradient clipping max norm; 0 disables clipping."},
         "batch_days": {
             "value": args.batch_days,
             "description": "Number of trading days grouped into one training batch before GPU transfer.",
+        },
+        "seed": {"value": args.seed, "description": "Base seed used to derive per-fold random seeds."},
+        "deterministic": {
+            "value": args.deterministic,
+            "description": "Request deterministic PyTorch algorithms where supported.",
         },
         "top_n": {"value": args.top_n, "description": "Top and bottom names used in long-short backtest."},
         "rebal_freq": {"value": args.rebal_freq, "description": "Backtest rebalance interval in trading days."},
@@ -195,6 +225,7 @@ def build_run_manifest(args, device, run_paths):
             "device": str(device),
             "amp_enabled": bool(getattr(args, "amp_enabled", False)),
             "amp_dtype": args.amp_dtype,
+            "deterministic": bool(args.deterministic),
         },
         "artifacts": {
             "run_name": run_paths["run_name"],
@@ -257,6 +288,9 @@ def main():
     if args.amp_mode == "on" and device.type != "cuda":
         print("AMP requested, but CUDA is unavailable. Falling back to full precision.")
     print(f"Forward AMP: {'on' if args.amp_enabled else 'off'} ({args.amp_dtype}) | Loss precision: fp32")
+    if args.seed is not None:
+        set_random_seed(args.seed, deterministic=args.deterministic)
+        print(f"Base seed: {args.seed} | deterministic={args.deterministic}")
 
     full_data = process_and_normalize_data(beta_window=args.beta_window, beta_min_obs=args.beta_min_obs)
     print(f"Active ETF proxies in data: {', '.join(full_data['etf_proxy_tickers'])}")
@@ -278,7 +312,7 @@ def main():
     fold_metrics = []
     for i, fold in enumerate(folds):
         print(f"\n{'=' * 60}\nFold {i + 1}/{len(folds)}: test [{fold['test_start'].strftime('%Y-%m-%d')} ~ {fold['test_end'].strftime('%Y-%m-%d')}]\n{'=' * 60}")
-        result, val_ic, test_ic = train_one_fold(fold, full_data, device, args)
+        result, val_ic, test_ic, fold_seed, best_epoch = train_one_fold(fold, full_data, device, args, fold_index=i + 1)
         if len(result) > 0:
             all_results.append(result)
             fold_metrics.append(
@@ -288,6 +322,8 @@ def main():
                     "test_end": fold["test_end"],
                     "val_ic": val_ic,
                     "test_ic": test_ic,
+                    "fold_seed": fold_seed,
+                    "best_epoch": best_epoch,
                     "n_samples": len(result),
                 }
             )

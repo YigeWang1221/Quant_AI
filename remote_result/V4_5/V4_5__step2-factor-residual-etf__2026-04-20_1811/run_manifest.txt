@@ -21,8 +21,11 @@ Loaded Parameters
   patience=15 | Early stopping patience after epoch 20.
   lr=0.0003 | AdamW learning rate.
   batch_days=16 | Number of trading days grouped into one training batch before GPU transfer.
-  top_n=3 | Top and bottom names used in long-short backtest.
+  top_n=5 | Top and bottom names used in long-short backtest.
   rebal_freq=5 | Backtest rebalance interval in trading days.
+  score_smooth_window=3 | Number of per-ticker predictions used for score smoothing before trading.
+  score_smooth_method=ewm | Trade-score smoothing method used before rebalance selection.
+  no_trade_band=0.3 | Incumbency bonus in normalized signal units before replacing an existing position.
   stock_plot=AAPL | Ticker used for rolling prediction visualization.
   beta_window=120 | Trailing daily-return window used to estimate ETF betas.
   beta_min_obs=60 | Minimum valid daily-return observations required to fit ETF betas.
@@ -30,7 +33,7 @@ Loaded Parameters
   amp_dtype=float16 | Mixed precision dtype when AMP is enabled.
 
 Artifact Files
-  stdout: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_0911/V4_5__step2-factor-residual-etf__2026-04-20_0911.out
-  stderr: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_0911/V4_5__step2-factor-residual-etf__2026-04-20_0911.err
-  manifest_json: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_0911/run_manifest.json
-  manifest_txt: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_0911/run_manifest.txt
+  stdout: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1811/V4_5__step2-factor-residual-etf__2026-04-20_1811.out
+  stderr: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1811/V4_5__step2-factor-residual-etf__2026-04-20_1811.err
+  manifest_json: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1811/run_manifest.json
+  manifest_txt: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1811/run_manifest.txt

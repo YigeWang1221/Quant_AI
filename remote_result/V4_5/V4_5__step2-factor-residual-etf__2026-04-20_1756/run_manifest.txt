@@ -1,0 +1,39 @@
+Experiment Manifest
+  Strategy code: step2_factor_residual_etf
+  Strategy name: Step2 FactorResidualETF
+  Strategy summary: Use trailing ETF betas to strip out predicted systematic return from each stock's 5-day forward return so the model trains on a cleaner idiosyncratic target.
+  Target label: Label = stock 5-day forward return minus trailing-beta ETF-implied 5-day return using SPY, QQQ, XLE, TLT, GLD.
+  Trainer profile: Notebook-aligned local-memory trainer: precomputed day tensors stay on CPU, batched forward passes run on GPU, and each batch moves to device only when needed to reduce OOM risk.
+  ETF proxies: SPY, QQQ, XLE, TLT, GLD
+  Reference notebook: JP_Morgen_V4_MPS.ipynb
+  Strategy dir: /home/wang.yige/7380/JP_Morgen_V4_5/strategies/step2_factor_residual_etf
+  Device: cuda
+  AMP active: True (float16)
+
+Loaded Parameters
+  d_model=256 | Transformer hidden dimension.
+  num_layers=4 | Number of Two-Way attention blocks.
+  nhead=8 | Attention heads per transformer layer.
+  dropout=0.15 | Dropout applied in projection and head layers.
+  listnet_weight=0.0 | Weight for ListNet ranking loss; step2 keeps this at 0.0 to isolate the target change first.
+  temperature=1.0 | ListNet softmax temperature.
+  num_epochs=100 | Maximum epochs per fold.
+  patience=15 | Early stopping patience after epoch 20.
+  lr=0.0003 | AdamW learning rate.
+  batch_days=16 | Number of trading days grouped into one training batch before GPU transfer.
+  top_n=5 | Top and bottom names used in long-short backtest.
+  rebal_freq=5 | Backtest rebalance interval in trading days.
+  score_smooth_window=3 | Number of per-ticker predictions used for score smoothing before trading.
+  score_smooth_method=ewm | Trade-score smoothing method used before rebalance selection.
+  no_trade_band=0.3 | Incumbency bonus in normalized signal units before replacing an existing position.
+  stock_plot=AAPL | Ticker used for rolling prediction visualization.
+  beta_window=120 | Trailing daily-return window used to estimate ETF betas.
+  beta_min_obs=60 | Minimum valid daily-return observations required to fit ETF betas.
+  amp_mode=on | CUDA mixed precision forward mode. Step2 now defaults to on for faster local training.
+  amp_dtype=float16 | Mixed precision dtype when AMP is enabled.
+
+Artifact Files
+  stdout: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/V4_5__step2-factor-residual-etf__2026-04-20_1756.out
+  stderr: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/V4_5__step2-factor-residual-etf__2026-04-20_1756.err
+  manifest_json: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/run_manifest.json
+  manifest_txt: /home/wang.yige/7380/log/V4_5/V4_5__step2-factor-residual-etf__2026-04-20_1756/run_manifest.txt

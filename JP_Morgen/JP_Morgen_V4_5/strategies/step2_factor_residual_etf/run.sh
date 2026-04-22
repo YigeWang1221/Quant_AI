@@ -36,19 +36,14 @@ export NCCL_P2P_DISABLE=1
 export NCCL_DEBUG=INFO
 export PYTHONUNBUFFERED=1
 
-common_args=(
-    --dropout 0.15
+shared_args=(
     --listnet_weight 0.0
     --num_epochs 100
     --patience 15
     --lr 0.0003
+    --grad_clip_norm 1.0
     --beta_window 120
     --beta_min_obs 60
-    --top_n 5
-    --rebal_freq 5
-    --score_smooth_window 3
-    --score_smooth_method ewm
-    --no_trade_band 0.30
     --amp_mode on
     --amp_dtype float16
 )
@@ -61,6 +56,18 @@ case "$preset" in
             --nhead 4
             --batch_days 20
         )
+        reg_args=(
+            --dropout 0.15
+            --weight_decay 0.0001
+            --early_stop_min_delta 0.0
+        )
+        trade_args=(
+            --top_n 5
+            --rebal_freq 5
+            --score_smooth_window 3
+            --score_smooth_method ewm
+            --no_trade_band 0.30
+        )
         ;;
     scale_2_412M|medium)
         model_args=(
@@ -68,6 +75,18 @@ case "$preset" in
             --num_layers 4
             --nhead 6
             --batch_days 20
+        )
+        reg_args=(
+            --dropout 0.15
+            --weight_decay 0.0001
+            --early_stop_min_delta 0.0
+        )
+        trade_args=(
+            --top_n 5
+            --rebal_freq 5
+            --score_smooth_window 3
+            --score_smooth_method ewm
+            --no_trade_band 0.30
         )
         ;;
     scale_4_277M|large)
@@ -77,10 +96,82 @@ case "$preset" in
             --nhead 8
             --batch_days 16
         )
+        reg_args=(
+            --dropout 0.15
+            --weight_decay 0.0001
+            --early_stop_min_delta 0.0
+        )
+        trade_args=(
+            --top_n 5
+            --rebal_freq 5
+            --score_smooth_window 3
+            --score_smooth_method ewm
+            --no_trade_band 0.30
+        )
+        ;;
+    stability_base|stability_ref)
+        model_args=(
+            --d_model 256
+            --num_layers 4
+            --nhead 8
+            --batch_days 16
+        )
+        reg_args=(
+            --dropout 0.15
+            --weight_decay 0.0001
+            --early_stop_min_delta 0.0
+        )
+        trade_args=(
+            --top_n 3
+            --rebal_freq 5
+            --score_smooth_window 1
+            --score_smooth_method off
+            --no_trade_band 0.0
+        )
+        ;;
+    stability_dropout)
+        model_args=(
+            --d_model 256
+            --num_layers 4
+            --nhead 8
+            --batch_days 16
+        )
+        reg_args=(
+            --dropout 0.20
+            --weight_decay 0.0001
+            --early_stop_min_delta 0.0
+        )
+        trade_args=(
+            --top_n 3
+            --rebal_freq 5
+            --score_smooth_window 1
+            --score_smooth_method off
+            --no_trade_band 0.0
+        )
+        ;;
+    stability_regularized|stability_reg)
+        model_args=(
+            --d_model 256
+            --num_layers 4
+            --nhead 8
+            --batch_days 16
+        )
+        reg_args=(
+            --dropout 0.20
+            --weight_decay 0.0005
+            --early_stop_min_delta 0.001
+        )
+        trade_args=(
+            --top_n 3
+            --rebal_freq 5
+            --score_smooth_window 1
+            --score_smooth_method off
+            --no_trade_band 0.0
+        )
         ;;
     *)
         echo "Unknown preset: $preset" >&2
-        echo "Usage: bash run.sh [fast|scale_2_412M|scale_4_277M] [extra args...]" >&2
+        echo "Usage: bash run.sh [fast|scale_2_412M|scale_4_277M|stability_base|stability_dropout|stability_regularized] [extra args...]" >&2
         exit 1
         ;;
 esac
@@ -90,7 +181,7 @@ echo "Preset: $preset"
 echo "Host: $(hostname)"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-none}"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-unset}"
-echo "Command: python strategies/step2_factor_residual_etf/main.py ${model_args[*]} ${common_args[*]} $*"
+echo "Command: python strategies/step2_factor_residual_etf/main.py ${model_args[*]} ${reg_args[*]} ${shared_args[*]} ${trade_args[*]} $*"
 
 if command -v nvidia-smi >/dev/null 2>&1; then
     echo "[run.sh] nvidia-smi -L"
@@ -113,5 +204,7 @@ PY
 
 python strategies/step2_factor_residual_etf/main.py \
     "${model_args[@]}" \
-    "${common_args[@]}" \
+    "${reg_args[@]}" \
+    "${shared_args[@]}" \
+    "${trade_args[@]}" \
     "$@"
