@@ -1,6 +1,6 @@
 # JP Morgan Quant V4.5 Update Timeline
 
-Last updated: 2026-04-20
+Last updated: 2026-04-21
 
 ## Purpose
 
@@ -21,6 +21,7 @@ This format is intentional. The project has already gone through one evaluation-
 - Add new nodes instead of silently rewriting the meaning of older results.
 - Use this file for implementation changes, comparison decisions, and explicit next-step pivots.
 - Use `README_PROGRESS.md` for the current recommendation, stage interpretation, and active working conclusions.
+- Use `MODULES.md` for current module contracts, shapes, and output schemas.
 - When a reusable validation tool is added, record both the motivation and the file path here.
 
 ## Timeline
@@ -929,6 +930,86 @@ Interpretation:
 Expected effect:
 
 - Seeded `stability_*` presets should now reach normal project logging and artifact creation on the remote cluster.
+
+Status:
+
+- Completed.
+
+### 2026-04-21 | Node 22 | Module-contract layer and AI prompt scaffolds added
+
+Step:
+
+- Add a dedicated contract snapshot for current module wiring and reusable prompt files for future AI sessions.
+
+Problem:
+
+- `README_PROGRESS.md` and `README_UPDATE.md` already explained project history and current recommendation, but they still did not answer:
+  - what each module expects as input now
+  - which trainer path is active
+  - which CSV columns are safe to treat as economic returns
+  - which files should be loaded for each task type
+- That kept forcing new AI conversations to read code just to reconstruct stable interfaces.
+
+Solution:
+
+- Add `MODULES.md` as the L2 module-contract layer.
+- Record:
+  - tensor shapes
+  - `full_data` structure
+  - output artifact schemas
+  - active dependencies
+  - stability status and last major change point by module
+- Add `AGENTS.md` and `CLAUDE.md` so future Codex / Claude sessions start from the same file-scope and task-template rules.
+- Update `README_PROGRESS.md` so L1 now explicitly points to `MODULES.md`.
+
+Files touched:
+
+- `MODULES.md`
+- `AGENTS.md`
+- `CLAUDE.md`
+- `README_PROGRESS.md`
+- `README_UPDATE.md`
+
+Expected effect:
+
+- Faster context recovery in future AI sessions.
+- Less repeated code-reading for questions about interfaces and dependencies.
+- Narrower, less diffuse conversations because task templates and writable-file scope are now documented.
+
+Status:
+
+- Completed.
+
+### 2026-04-21 | Node 23 | Agent guidance was collapsed back to one source of truth
+
+Step:
+
+- Rework the mixed Codex + Claude Code docs so the project does not maintain two independent agent-policy documents.
+
+Problem:
+
+- A split `AGENTS.md` / `CLAUDE.md` policy setup invites drift.
+- The project needed Claude compatibility without letting prompt rules fork into separate maintenance tracks.
+
+Solution:
+
+- Keep `AGENTS.md` as the single authoritative agent-policy file.
+- Add `PROJECT_KNOWLEDGE.md` as the compact shared knowledge file intended for mixed Codex + Claude Code use.
+- Reduce `CLAUDE.md` to a compatibility note that points back to `AGENTS.md`.
+
+Files touched:
+
+- `AGENTS.md`
+- `PROJECT_KNOWLEDGE.md`
+- `CLAUDE.md`
+- `README_PROGRESS.md`
+- `README_UPDATE.md`
+
+Expected effect:
+
+- One policy file instead of two drifting policy files.
+- One compact knowledge file that can be attached to project knowledge or used as a shared warm-start context.
+- Cleaner maintenance when the project workflow changes later.
 
 Status:
 
