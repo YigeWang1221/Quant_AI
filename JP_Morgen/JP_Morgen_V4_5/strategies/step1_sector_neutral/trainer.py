@@ -11,6 +11,7 @@ from scipy import stats
 
 from loss import V4CombinedLoss
 from model import QuantV4
+from utils import set_random_seed
 
 
 def generate_folds(dates, val_months, test_months, min_train_years):
@@ -161,7 +162,14 @@ def _predict_by_date(model, daily, dates, max_stocks, device, batch_days, amp_en
     return predictions
 
 
-def train_one_fold(fold, full_data, device, args):
+def _resolve_fold_seed(args, fold_index):
+    base_seed = getattr(args, "seed", None)
+    if base_seed is None:
+        return None
+    return int(base_seed) + max(int(fold_index) - 1, 0)
+
+
+def train_one_fold(fold, full_data, device, args, fold_index=1):
     daily = full_data["daily_samples"]
     all_dates = full_data["valid_dates"]
     train_dates = [d for d in get_dates_in_range(all_dates, fold["train_start"], fold["train_end"]) if d in daily]
@@ -171,7 +179,13 @@ def train_one_fold(fold, full_data, device, args):
 
     if len(train_dates) < 50 or len(val_dates) < 10 or len(test_dates) < 10:
         print("  Skip")
-        return pd.DataFrame(), 0.0, 0.0
+        return pd.DataFrame(), 0.0, 0.0, None, None
+
+    fold_seed = _resolve_fold_seed(args, fold_index)
+    if fold_seed is not None:
+        set_random_seed(fold_seed, deterministic=getattr(args, "deterministic", False))
+        print(f"  Fold seed: {fold_seed} | deterministic={bool(getattr(args, 'deterministic', False))}")
+    shuffle_rng = np.random.default_rng(fold_seed)
 
     max_stocks = max(
         max(len(daily[d]["tickers"]) for d in train_dates),
@@ -193,7 +207,7 @@ def train_one_fold(fold, full_data, device, args):
         ff=args.d_model * 2,
         drop=args.dropout,
     ).to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max(args.num_epochs // 2, 1))
     criterion = V4CombinedLoss(
         listnet_weight=args.listnet_weight,
@@ -205,14 +219,13 @@ def train_one_fold(fold, full_data, device, args):
     scaler_enabled = amp_enabled and amp_dtype == torch.float16
     scaler = torch.amp.GradScaler("cuda", enabled=scaler_enabled)
 
-    best_val_ic, best_state, no_improve = -np.inf, None, 0
+    best_val_ic, best_state, no_improve, best_epoch = -np.inf, None, 0, None
 
     for ep in range(args.num_epochs):
         epoch_start = time.perf_counter()
         model.train()
         epoch_loss, epoch_ic, n_batch = 0.0, 0.0, 0
-        shuffled = train_dates.copy()
-        np.random.shuffle(shuffled)
+        shuffled = shuffle_rng.permutation(train_dates).tolist()
 
         for batch_start in range(0, len(shuffled), args.batch_days):
             batch_dates = shuffled[batch_start:batch_start + args.batch_days]
@@ -230,12 +243,14 @@ def train_one_fold(fold, full_data, device, args):
             if scaler_enabled:
                 scaler.scale(total_loss).backward()
                 scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                if args.grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm)
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                if args.grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm)
                 optimizer.step()
 
             epoch_loss += total_loss.item()
@@ -266,9 +281,10 @@ def train_one_fold(fold, full_data, device, args):
                     val_ics.append(ic)
         val_ic = np.mean(val_ics) if val_ics else 0.0
 
-        if val_ic > best_val_ic:
+        if val_ic > best_val_ic + args.early_stop_min_delta:
             best_val_ic = val_ic
             best_state = copy.deepcopy(model.state_dict())
+            best_epoch = ep + 1
             no_improve = 0
         else:
             no_improve += 1
@@ -318,7 +334,8 @@ def train_one_fold(fold, full_data, device, args):
 
     result_df = pd.DataFrame(results)
     test_ic = stats.spearmanr(result_df["predicted"], result_df["actual"])[0] if len(result_df) > 0 else 0.0
-    print(f"  Done | Test IC: {test_ic:.4f} | Best Val IC: {best_val_ic:.4f}\n")
+    best_epoch_text = best_epoch if best_epoch is not None else "n/a"
+    print(f"  Done | Test IC: {test_ic:.4f} | Best Val IC: {best_val_ic:.4f} | Best Epoch: {best_epoch_text}\n")
 
     del precomputed, model, optimizer
     if torch.cuda.is_available():
@@ -326,4 +343,4 @@ def train_one_fold(fold, full_data, device, args):
     elif torch.backends.mps.is_available():
         torch.mps.empty_cache()
 
-    return result_df, best_val_ic, test_ic
+    return result_df, best_val_ic, test_ic, fold_seed, best_epoch

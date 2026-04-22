@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import json
+import random
 from datetime import datetime
 
 cache_root = os.path.join(tempfile.gettempdir(), "jp_quant_cache")
@@ -141,3 +142,36 @@ def get_device():
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+def set_random_seed(seed, deterministic=False):
+    if seed is None:
+        return None
+
+    seed = int(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("NumPy is required to set the project seed.") from exc
+
+    np.random.seed(seed)
+
+    try:
+        import torch
+    except ImportError as exc:
+        raise RuntimeError("PyTorch is required to set the project seed.") from exc
+
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    if hasattr(torch, "use_deterministic_algorithms"):
+        torch.use_deterministic_algorithms(bool(deterministic), warn_only=True)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.deterministic = bool(deterministic)
+        torch.backends.cudnn.benchmark = not bool(deterministic)
+
+    return seed
