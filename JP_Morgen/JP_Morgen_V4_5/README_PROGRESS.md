@@ -1,6 +1,6 @@
 # JP Morgan Quant V4.5 Progress Timeline
 
-Last updated: 2026-04-21
+Last updated: 2026-04-23
 
 ## Purpose And Maintenance Rules
 
@@ -30,11 +30,24 @@ Recommendation:
 - Do not scale larger immediately.
 - Do not promote the current Step 3 trading-layer preset to a trusted default yet.
 - Keep running the same offline portfolio sweep on every saved `predictions.csv`.
-- Shift the next work round toward stability debugging:
-  - repeatability
-  - seed sensitivity
-  - signal-direction flips
-  - regularization / validation discipline
+- Run the next local work round as two fixed stability passes before any new architecture change:
+  - Round 1 = base stability sweep
+  - Round 2 = regularized stability sweep
+- Keep the trading layer fixed to the simple base comparison during both rounds:
+  - `top_n = 3`
+  - `rebal_freq = 5`
+  - `score_smooth_method = off`
+  - `score_smooth_window = 1`
+  - `no_trade_band = 0.0`
+- Use the same five seeds in both rounds:
+  - `101`
+  - `202`
+  - `303`
+  - `404`
+  - `505`
+- Use the local round runner for this pass:
+  - `strategies/step2_factor_residual_etf/run_local_stability_rounds.py`
+  - `strategies/step2_factor_residual_etf/run_local_stability_rounds.ps1`
 
 Why this is the right time:
 
@@ -45,24 +58,31 @@ Why this is the right time:
 
 Recommended next experiments:
 
-1. Keep evaluating every saved `4.277M` run under one common base trading layer:
+1. Complete Round 1 locally with the fixed base stability setup:
    - `d_model = 256`
    - `num_layers = 4`
    - `nhead = 8`
+   - `dropout = 0.15`
+   - `weight_decay = 0.0001`
+   - `early_stop_min_delta = 0.0`
+   - `batch_days = 16`
    - `top_n = 3`
    - `rebal_freq = 5`
    - no smoothing
    - no trade band
-2. Keep running the same offline sweep over every saved `predictions.csv`:
-   - `top_n`
-   - `rebal_freq`
-   - `score_smooth_method`
-   - `score_smooth_window`
-   - `no_trade_band`
-3. Open a stability-debug round before promoting Step 3:
-   - compare seed-to-seed signal direction
-   - test whether stronger regularization narrows the validation-to-test gap
-   - investigate why `1003` remained strong while most later repeats weakened on corrected `Avg Test IC`
+2. Complete Round 2 locally with the same seeds and stronger regularization:
+   - `dropout = 0.20`
+   - `weight_decay = 0.0005`
+   - `early_stop_min_delta = 0.001`
+   - everything else stays on the same `4.277M` base comparison setup
+3. After each round:
+   - review `summary/run_summary.csv`
+   - review `summary/aggregate_summary.csv`
+   - keep running the same offline sweep over every saved `predictions.csv`
+4. Promote any stability conclusion only if Round 2 reduces:
+   - seed-to-seed signal-direction flips
+   - validation-to-test IC gap
+   - dispersion of corrected `Avg Test IC`
 
 Promotion rule:
 
@@ -170,11 +190,17 @@ Strategy folders:
   - Step 2 label and trainer entrypoint for ETF-residual target engineering
   - current active branch for model-size and monetization work
   - `run.sh` now includes stability presets for repeatability debugging
+  - `run_local_stability_rounds.py` runs one or both local stability rounds and writes round-level summaries
+  - `run_local_stability_rounds.ps1` is the Quant311 local launcher wrapper
 
 Artifact folders:
 
 - `log/`
   - local run outputs
+- `log/V4_5/rounds/`
+  - local round manifests
+  - per-round summaries
+  - offline sweep outputs
 - `update_img/`
   - supporting update images
 - adjacent workspace folder `remote_result/V4_5`
@@ -1011,6 +1037,33 @@ Current active `step2` defaults:
 - `score_smooth_method = ewm`
 - `no_trade_band = 0.30`
 
+Current local stability-round defaults:
+
+- Rounds use the same seed set:
+  - `101`
+  - `202`
+  - `303`
+  - `404`
+  - `505`
+- Round 1:
+  - `dropout = 0.15`
+  - `weight_decay = 0.0001`
+  - `early_stop_min_delta = 0.0`
+  - `top_n = 3`
+  - `rebal_freq = 5`
+  - `score_smooth_method = off`
+  - `score_smooth_window = 1`
+  - `no_trade_band = 0.0`
+- Round 2:
+  - `dropout = 0.20`
+  - `weight_decay = 0.0005`
+  - `early_stop_min_delta = 0.001`
+  - `top_n = 3`
+  - `rebal_freq = 5`
+  - `score_smooth_method = off`
+  - `score_smooth_window = 1`
+  - `no_trade_band = 0.0`
+
 Current tested model sizes:
 
 - Fast reference:
@@ -1033,6 +1086,9 @@ Current tested model sizes:
   - `strategies/step2_factor_residual_etf/main.py`
 - Active cluster launch presets:
   - `strategies/step2_factor_residual_etf/run.sh`
+- Active local stability launcher:
+  - `strategies/step2_factor_residual_etf/run_local_stability_rounds.py`
+  - `strategies/step2_factor_residual_etf/run_local_stability_rounds.ps1`
 - Active fast trainer path:
   - `strategies/step1_sector_neutral/trainer.py`
   - `strategies/step2_factor_residual_etf/trainer.py`

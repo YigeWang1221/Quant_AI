@@ -1,6 +1,6 @@
 # JP Morgan Quant V4.5 Module Contracts
 
-Last updated: 2026-04-21
+Last updated: 2026-04-23
 
 ## Purpose
 
@@ -29,6 +29,9 @@ Current research path:
   - `evaluate_saved_predictions.py`
 - Active remote launcher:
   - `strategies/step2_factor_residual_etf/run.sh`
+- Active local round launcher:
+  - `strategies/step2_factor_residual_etf/run_local_stability_rounds.py`
+  - `strategies/step2_factor_residual_etf/run_local_stability_rounds.ps1`
 
 Project invariants:
 
@@ -184,6 +187,20 @@ Active Step 1 / Step 2 `fold_metrics.csv` columns:
 - `score_smooth_window`
 - `score_smooth_method`
 - `no_trade_band`
+
+Round-level local stability outputs under `log/V4_5/rounds/...`:
+
+- `round_manifest.json`
+  - one file per requested round
+  - records seeds, commands, console logs, and resolved run directories
+- `summary/run_summary.csv`
+  - one row per completed run
+  - includes seed, core hyperparameters, average fold ICs, net return, turnover, drawdown, and selected direction
+- `summary/aggregate_summary.csv`
+  - one row per round configuration
+  - aggregates mean / median test IC, mean / median net return, direction counts, and seed list
+- `offline_sweep/`
+  - optional round-level output from `evaluate_saved_predictions.py`
 
 ## File Contracts
 
@@ -391,11 +408,31 @@ Active Step 1 / Step 2 `fold_metrics.csv` columns:
     - `sweep_manifest.json`
   - added in Node 17
 
+- `strategies/step2_factor_residual_etf/run_local_stability_rounds.py`
+  - local Quant311 orchestrator for Round 1 / Round 2 stability work
+  - runs one or both rounds over a shared seed list
+  - writes:
+    - `round_manifest.json`
+    - `summary/run_summary.csv`
+    - `summary/aggregate_summary.csv`
+    - `offline_sweep/` when enabled
+  - defaults:
+    - seeds = `101,202,303,404,505`
+    - Round 1 = base stability comparison
+    - Round 2 = stronger regularization with the same simple trading layer
+  - added in Node 24
+
+- `strategies/step2_factor_residual_etf/run_local_stability_rounds.ps1`
+  - PowerShell wrapper around `run_local_stability_rounds.py`
+  - pins the local execution environment to `Quant311`
+  - added in Node 24
+
 - `utils.py`
   - runtime helpers for logging, device selection, artifact dirs, and seeding
   - `set_random_seed(seed, deterministic=False)` syncs Python, NumPy, PyTorch, CUDA, and deterministic flags where supported
+  - `create_run_dirs()` now prefers the explicit `run_label` in the final run directory name so seeded runs keep their identifying suffixes
   - last major interface change:
-    - Node 20
+    - Node 24
 
 - `strategies/step2_factor_residual_etf/run.sh`
   - active remote launch wrapper
