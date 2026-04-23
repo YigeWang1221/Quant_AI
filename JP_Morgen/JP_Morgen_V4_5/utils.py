@@ -73,10 +73,15 @@ def create_run_dirs(run_label=None, experiment_name=None):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
     experiment_slug = _slugify(experiment_name) if experiment_name else ""
     run_label_slug = _slugify(run_label) if run_label else ""
-    if experiment_slug:
-        run_name = "__".join([MODEL_VERSION, experiment_slug, timestamp])
-    elif run_label_slug:
-        run_name = "__".join([MODEL_VERSION, run_label_slug, timestamp])
+    if run_label_slug:
+        name_slug = run_label_slug
+    elif experiment_slug:
+        name_slug = experiment_slug
+    else:
+        name_slug = ""
+
+    if name_slug:
+        run_name = "__".join([MODEL_VERSION, name_slug, timestamp])
     else:
         run_name = "__".join([MODEL_VERSION, timestamp])
     run_dir = os.path.join(LOG_ROOT, run_name)

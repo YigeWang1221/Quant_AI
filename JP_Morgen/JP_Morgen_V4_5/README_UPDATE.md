@@ -1,6 +1,6 @@
 # JP Morgan Quant V4.5 Update Timeline
 
-Last updated: 2026-04-21
+Last updated: 2026-04-23
 
 ## Purpose
 
@@ -1010,6 +1010,61 @@ Expected effect:
 - One policy file instead of two drifting policy files.
 - One compact knowledge file that can be attached to project knowledge or used as a shared warm-start context.
 - Cleaner maintenance when the project workflow changes later.
+
+Status:
+
+- Completed.
+
+### 2026-04-23 | Node 24 | Local two-round stability runner and round summaries added
+
+Step:
+
+- Turn the local stability recommendation into one executable workflow instead of manual per-seed command editing.
+
+Problem:
+
+- The project already knew the next work round should be:
+  - Round 1 base stability comparison
+  - Round 2 stronger regularization
+- But local execution still required hand-running every seed and then manually collecting:
+  - run directories
+  - fold metrics
+  - backtest results
+  - offline sweep outputs
+- That would make the next stability pass slower to launch and easier to compare inconsistently.
+
+Solution:
+
+- Add `strategies/step2_factor_residual_etf/run_local_stability_rounds.py`.
+- Add `strategies/step2_factor_residual_etf/run_local_stability_rounds.ps1` as the Quant311 wrapper.
+- Make the local runner:
+  - run Round 1, Round 2, or both
+  - use one shared seed list by default:
+    - `101`
+    - `202`
+    - `303`
+    - `404`
+    - `505`
+  - write per-round manifests under `log/V4_5/rounds/`
+  - build `summary/run_summary.csv`
+  - build `summary/aggregate_summary.csv`
+  - optionally run `evaluate_saved_predictions.py` into `offline_sweep/`
+- Update `utils.create_run_dirs()` so explicit `run_label` wins over the generic experiment slug in the final run directory name.
+
+Files touched:
+
+- `utils.py`
+- `strategies/step2_factor_residual_etf/run_local_stability_rounds.py`
+- `strategies/step2_factor_residual_etf/run_local_stability_rounds.ps1`
+- `README_PROGRESS.md`
+- `MODULES.md`
+- `README_UPDATE.md`
+
+Expected effect:
+
+- One local command can now execute the full two-round stability plan.
+- Seeded runs keep their identifying suffixes in the final run directory name.
+- Round-level comparison becomes much easier because each pass now writes one consistent manifest plus aggregate summary files.
 
 Status:
 
